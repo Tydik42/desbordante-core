@@ -68,10 +68,13 @@ CSVConfig const kIndTest3aryInds = CreateCsvConfig("ind_data/Test-3ary-inds.csv"
 CSVConfig const kIndTestTableFirst = CreateCsvConfig("ind_data/two_tables/first.csv", ',', false);
 CSVConfig const kIndTestTableSecond = CreateCsvConfig("ind_data/two_tables/second.csv", ',', false);
 CSVConfig const kIndTestNulls = CreateCsvConfig("INDTestNulls.csv", ',', true);
+CSVConfig const kIndTestTypos = CreateCsvConfig("ind_data/IndTestTypos.csv", ',', true);
 CSVConfig const kTestZeros = CreateCsvConfig("TestZeros.csv", ',', true);
 CSVConfig const kNullEmpty = CreateCsvConfig("NullEmpty.csv", ',', true);
 CSVConfig const kSimpleTypes = CreateCsvConfig("SimpleTypes.csv", ',', true);
 CSVConfig const kRulesBook = CreateCsvConfig("transactional_data/rules-book.csv", ',', false);
+CSVConfig const kRulesBookRows =
+        CreateCsvConfig("transactional_data/rules-book-rows.csv", ',', false);
 CSVConfig const kRulesPresentationExtended =
         CreateCsvConfig("transactional_data/rules-presentation-extended.csv", ',', false);
 CSVConfig const kRulesPresentation =
@@ -96,10 +99,14 @@ CSVConfig const kTestDD = CreateCsvConfig("TestDD.csv", ',', true);
 CSVConfig const kTestDD1 = CreateCsvConfig("TestDD1.csv", ',', true);
 CSVConfig const kTestDD2 = CreateCsvConfig("TestDD2.csv", ',', true);
 CSVConfig const kTestDD3 = CreateCsvConfig("TestDD3.csv", ',', true);
+CSVConfig const kTestDD4 = CreateCsvConfig("TestDD4.csv", ',', true);
+CSVConfig const kTestDD5 = CreateCsvConfig("TestDD5.csv", ',', true);
 CSVConfig const kTestDif = CreateCsvConfig("dif_tables/TestDif.csv", ',', true);
 CSVConfig const kTestDif1 = CreateCsvConfig("dif_tables/TestDif1.csv", ',', true);
 CSVConfig const kTestDif2 = CreateCsvConfig("dif_tables/TestDif2.csv", ',', true);
 CSVConfig const kTestDif3 = CreateCsvConfig("dif_tables/TestDif3.csv", ',', true);
+CSVConfig const kTestDif4 = CreateCsvConfig("dif_tables/TestDif4.csv", ',', true);
+CSVConfig const kTestDif5 = CreateCsvConfig("dif_tables/TestDif5.csv", ',', true);
 CSVConfig const kSimpleTypes1 = CreateCsvConfig("SimpleTypes1.csv", ',', true);
 CSVConfig const kTestDynamicFDInit = CreateCsvConfig("dynamic_fd/TestDynamicInit.csv", ',', true);
 CSVConfig const kTestDynamicFDEmpty = CreateCsvConfig("dynamic_fd/TestDynamicEmpty.csv", ',', true);
@@ -120,4 +127,7 @@ CSVConfig const kTestDynamicFDUpdateBad3 =
 CSVConfig const kTestDynamicFDUpdateBad4 =
         CreateCsvConfig("dynamic_fd/TestDynamicUpdateBad4.csv", ',', true);
 CSVConfig const kLineItem = CreateCsvConfig("LineItem.csv", '|', true);
+CSVConfig const kAnimalsBeverages = CreateCsvConfig("animals_beverages.csv", ',', true);
+CSVConfig const kTestDC = CreateCsvConfig("TestDC.csv", ',', true);
+CSVConfig const kTestDC1 = CreateCsvConfig("TestDC1.csv", ',', true);
 }  // namespace tests

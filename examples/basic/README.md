@@ -15,6 +15,7 @@ These scenarios showcase a single pattern by discussing its definition and provi
 + [mining_fd.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_fd.py) — a scenario showing how to discover exact functional dependencies.
 + [mining_ind.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_ind.py) — a scenario showing how to discover inclusion dependencies.
 + [mining_list_od.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_list_od.py) — a scenario showing how to discover order dependencies based on list axiomatization.
++ [mining_md.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_md.py) — a scenario showing how to discover matching dependencies.
 + [mining_pfd.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_pfd.py) — a scenario showing how to discover probabilistic functional dependencies.
 + [mining_set_od_1.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_set_od_1.py) — a scenario showing how to discover order dependencies based on set axiomatization, part 1.
 + [mining_set_od_2.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/mining_set_od_2.py) — a scenario showing how to discover order dependencies based on set axiomatization, part 2.
@@ -25,4 +26,4 @@ These scenarios showcase a single pattern by discussing its definition and provi
 + [verifying_nd](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_nd) — a scenario showing how to verify numerical dependencies.
 + [verifying_mfd.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_mfd.py) — a scenario showing how to verify metric functional dependencies.
 + [verifying_ucc.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_ucc.py) — a scenario showing how to verify a unique column combination.
-
++ [verifying_dc.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_dc.py) — a scenario showing how to verify a denial constraint.
