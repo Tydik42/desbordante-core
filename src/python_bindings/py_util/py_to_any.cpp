@@ -2,7 +2,7 @@
 #include <unordered_map>
 
 #include <boost/any.hpp>
-#include <easylogging++.h>
+#include <spdlog/spdlog.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl/filesystem.h>

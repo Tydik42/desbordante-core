@@ -9,8 +9,10 @@
 #include <cmath>
 #include <numeric>
 #include <string>
+#include <fstream>
 
-#include <easylogging++.h>
+
+#include <spdlog/spdlog.h>
 
 #include "config/thread_number/type.h"
 #include "model/table/block_dataset_stream.h"
@@ -122,7 +124,7 @@ bool DomainPartition::TrySwap() {
                                 "." + std::to_string(GetPartitionId()));
     std::ofstream file{file_path};
     if (!file.is_open()) {
-        LOG(ERROR) << "unable to open file for swapping";
+        spdlog::error("unable to open file for swapping");
         throw std::runtime_error("Cannot open file for swapping");
     }
 
