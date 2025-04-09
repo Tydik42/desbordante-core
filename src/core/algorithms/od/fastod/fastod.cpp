@@ -3,7 +3,7 @@
 #include <memory>
 
 #include <boost/unordered/unordered_map.hpp>
-#include <easylogging++.h>
+#include <spdlog/spdlog.h>
 
 #include "config/tabular_data/input_table/option.h"
 #include "config/time_limit/option.h"
@@ -69,15 +69,15 @@ unsigned long long Fastod::ExecuteInternal() {
     size_t const elapsed_milliseconds = util::TimedInvoke(&Fastod::Discover, this);
 
     for (auto const& od : result_asc_) {
-        LOG(DEBUG) << od.ToString();
+        spdlog::debug(od.ToString());
     }
 
     for (auto const& od : result_desc_) {
-        LOG(DEBUG) << od.ToString();
+        spdlog::debug(od.ToString());
     }
 
     for (auto const& od : result_simple_) {
-        LOG(DEBUG) << od.ToString();
+        spdlog::debug(od.ToString());
     }
 
     return elapsed_milliseconds;
@@ -88,10 +88,9 @@ void Fastod::PrintStatistics() const {
     const size_t fd_count = result_simple_.size();
     const size_t od_count = ocd_count + fd_count;
 
-    LOG(DEBUG) << "RESULT: Time=" << timer_.GetElapsedSeconds() << ", "
-               << "OD=" << od_count << ", "
-               << "FD=" << fd_count << ", "
-               << "OCD=" << ocd_count;
+    spdlog::debug("RESULT: Time={}, OD={}, FD={}, OCD={}",
+        timer_.GetElapsedSeconds(), od_count,
+               fd_count, ocd_count);
 }
 
 bool Fastod::IsComplete() const {
@@ -270,9 +269,9 @@ void Fastod::Discover() {
     timer_.Stop();
 
     if (IsComplete()) {
-        LOG(DEBUG) << "FastOD finished successfully";
+        spdlog::debug("FastOD finished successfully");
     } else {
-        LOG(DEBUG) << "FastOD finished with a time-out";
+        spdlog::debug("FastOD finished with a time-out");
     }
 
     PrintStatistics();
