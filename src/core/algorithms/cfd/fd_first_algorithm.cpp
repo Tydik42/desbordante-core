@@ -317,7 +317,7 @@ void FDFirstAlgorithm::AddCFDToCFDList(std::vector<int> const& sub, int out,
     if (rules_.find(out) != rules_.end()) {
         for (auto const& sub_rule : rules_[out]) {
             if (out < 0 && !std::any_of(sub_rule.begin(), sub_rule.end(),
-                        [](int si) -> bool { return si < 0; }))
+                                        [](int si) -> bool { return si < 0; }))
                 continue;
             if (Precedes(sub_rule, sub)) {
                 lhs_gen = false;
