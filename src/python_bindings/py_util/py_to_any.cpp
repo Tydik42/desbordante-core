@@ -29,6 +29,47 @@ namespace {
 namespace py = pybind11;
 using ConvFunc = std::function<boost::any(std::string_view, py::handle)>;
 
+inline std::string SnakeToKCamel(std::string_view input) {
+    std::string out;
+    out.reserve(input.size() + 1);
+    out.push_back('k');
+
+    bool capitalize_next = true;
+
+    for (char c : input) {
+        if (c == '_') {
+            capitalize_next = true;
+        } else {
+            if (capitalize_next) {
+                out.push_back(std::toupper(static_cast<unsigned char>(c)));
+                capitalize_next = false;
+            } else {
+                out.push_back(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+    }
+    return out;
+}
+
+inline std::string KCamelToSnake(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+    size_t start_idx = (input.size() > 1 && input[0] == 'k' && std::isupper(input[1])) ? 1 : 0;
+
+    for (size_t i = start_idx; i < input.size(); ++i) {
+        char c = input[i];
+        if (std::isupper(c)) {
+            if (i > start_idx) {
+                out.push_back('_');
+            }
+            out.push_back(std::tolower(static_cast<unsigned char>(c)));
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
 template <typename T>
 T CastAndReplaceCastError(std::string_view option_name, py::handle value) {
     try {
@@ -65,39 +106,61 @@ std::pair<std::type_index, ConvFunc> const kNormalConvPair{
         }};
 
 template <typename EnumType>
+    requires magic_enum::is_scoped_enum_v<EnumType> || magic_enum::is_unscoped_enum_v<EnumType>
 std::pair<std::type_index, ConvFunc> const kEnumConvPair{
-        std::type_index(typeid(EnumType)), [](std::string_view option_name, py::handle value) {
-            auto string = CastAndReplaceCastError<std::string>(option_name, value);
-            better_enums::optional<EnumType> enum_holder =
-                    EnumType::_from_string_nocase_nothrow(string.data());
-            if (enum_holder) return *enum_holder;
+        std::type_index(typeid(EnumType)),
+        [](std::string_view option_name, py::handle value) -> boost::any {
+            auto user_str = CastAndReplaceCastError<std::string>(option_name, value);
+            std::string cpp_enum_name = SnakeToKCamel(user_str);
+
+            auto enum_optional = magic_enum::enum_cast<EnumType>(cpp_enum_name);
+
+            if (enum_optional) return *enum_optional;
 
             std::stringstream error_message;
-            error_message << "Incorrect value for option \"" << option_name
-                          << "\". Possible values: " << util::EnumToAvailableValues<EnumType>();
+            std::stringstream possible_values;
+
+            possible_values << "[";
+            constexpr auto& values = magic_enum::enum_values<EnumType>();
+            for (size_t i = 0; i < values.size(); ++i) {
+                possible_values << KCamelToSnake(magic_enum::enum_name(values[i]));
+                if (i < values.size() - 1) {
+                    possible_values << "|";
+                }
+            }
+            possible_values << "]";
+
+            error_message << "Incorrect value '" << user_str << "' for option \"" << option_name
+                          << "\". Possible values: " << possible_values.str();
+
             throw config::ConfigurationError(error_message.str());
         }};
 
 template <typename EnumType>
+    requires magic_enum::is_scoped_enum_v<EnumType> || magic_enum::is_unscoped_enum_v<EnumType>
 std::pair<std::type_index, ConvFunc> const kCharEnumConvPair{
-        std::type_index(typeid(EnumType)), [](std::string_view option_name, py::handle value) {
-            using EnumValueType = typename EnumType::_integral;
-            // May be applicable to other types.
-            static_assert(std::is_same_v<EnumValueType, char>);
-            auto char_value = CastAndReplaceCastError<char>(option_name, value);
-            better_enums::optional<EnumType> enum_holder =
-                    EnumType::_from_integral_nothrow(char_value);
-            if (enum_holder) return *enum_holder;
+        std::type_index(typeid(EnumType)),
+        [](std::string_view option_name, py::handle value) -> boost::any {
+            using UnderlyingType = magic_enum::underlying_type_t<EnumType>;
+            static_assert(std::is_same_v<UnderlyingType, char>,
+                          "This converter is for char-based enums only.");
+
+            auto char_value = CastAndReplaceCastError<UnderlyingType>(option_name, value);
+            auto enum_optional = magic_enum::enum_cast<EnumType>(char_value);
+
+            if (enum_optional) return *enum_optional;
 
             std::stringstream error_message;
-            error_message << "Incorrect value for option \"" << option_name
-                          << "\". Possible values: ";
+            error_message << "Incorrect integral value '" << static_cast<int>(char_value)
+                          << "' for option \"" << option_name << "\". Possible values are: [";
 
-            error_message << '[';
-            for (auto const& val : EnumType::_values()) {
-                error_message << val._to_integral() << '|';
+            constexpr auto& enum_values = magic_enum::enum_values<EnumType>();
+            for (size_t i = 0; i < enum_values.size(); ++i) {
+                error_message << static_cast<int>(magic_enum::enum_integer(enum_values[i]));
+                if (i < enum_values.size() - 1) {
+                    error_message << '|';
+                }
             }
-            error_message.seekp(-1, std::stringstream::cur);
             error_message << ']';
 
             throw config::ConfigurationError(error_message.str());
