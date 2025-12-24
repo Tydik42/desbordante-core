@@ -22,7 +22,10 @@ set(NAME cfd)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE cfd_discovery.cpp fd_first_algorithm.cpp)
 target_link_libraries(
+    ${NAME} PUBLIC magic_enum::magic_enum
+)
+target_link_libraries(
     ${NAME}
     PRIVATE ${DESBORDANTE_PREFIX}::cfd::model ${DESBORDANTE_PREFIX}::cfd::util
-            ${DESBORDANTE_PREFIX}::algos spdlog::spdlog_header_only better-enums Boost::headers
+            ${DESBORDANTE_PREFIX}::algos spdlog::spdlog_header_only Boost::headers
 )

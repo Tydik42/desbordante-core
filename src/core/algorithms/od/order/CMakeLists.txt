@@ -5,6 +5,9 @@ target_sources(
                     sorted_partitions.cpp
 )
 target_link_libraries(
+    ${NAME} PUBLIC magic_enum::magic_enum
+)
+target_link_libraries(
     ${NAME} PRIVATE ${DESBORDANTE_PREFIX}::model::table spdlog::spdlog_header_only
-                    ${DESBORDANTE_PREFIX}::algos better-enums Boost::headers
+                    ${DESBORDANTE_PREFIX}::algos Boost::headers
 )
