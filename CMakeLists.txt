@@ -76,6 +76,8 @@ set(DESBORDANTE_BINDINGS
 )
 set_property(CACHE DESBORDANTE_BINDINGS PROPERTY STRINGS OFF BUILD INSTALL)
 
+option(DESBORDANTE_USE_NANOBIND "Use nanobind instead of pybind11 for Python bindings" OFF)
+
 # By default select Debug build
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
@@ -237,5 +239,8 @@ endif()
 
 # Configure Python bindings
 if(DESBORDANTE_BINDINGS)
+    if(DESBORDANTE_USE_NANOBIND)
+        find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
+    endif()
     add_subdirectory("src/python_bindings")
 endif()

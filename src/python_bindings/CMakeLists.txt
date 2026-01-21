@@ -6,6 +6,27 @@ project(
     DESCRIPTION "Python bindings to the interface of the Desbordante C++ core library"
 )
 
+if(DESBORDANTE_USE_NANOBIND)
+    message(STATUS "Using nanobind for Python bindings")
+    CPMAddPackage("gh:wjakob/nanobind@2.4.0")
+    CPMAddPackage("gh:felixguendling/cista@0.15")
+    
+    nanobind_add_module(desbordante_ar_poc ar/bindings_nb_poc.cpp)
+    target_link_libraries(desbordante_ar_poc PRIVATE 
+        Desbordante::algos
+        better-enums
+        Boost::headers
+        spdlog::spdlog_header_only
+    )
+    target_include_directories(desbordante_ar_poc PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    set_target_properties(desbordante_ar_poc PROPERTIES 
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    )
+    
+    return()
+endif()
+
+message(STATUS "Using pybind11 for Python bindings")
 CPMAddPackage("gh:pybind/pybind11@2.13.4")
 
 # ---- Python Bindings Configuration ----
