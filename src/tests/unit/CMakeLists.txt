@@ -443,6 +443,18 @@ desbordante_add_test(
     Boost::headers
 )
 
+# --- GK ---
+desbordante_add_test(
+    gk.validator
+    SRCS
+    test_gk_validator.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk::validator
+    ${DESBORDANTE_PREFIX}::algos
+    ${DESBORDANTE_PREFIX}::config
+    Boost::headers
+)
+
 # --- FSM ---
 desbordante_add_test(
     fsm.gspan
