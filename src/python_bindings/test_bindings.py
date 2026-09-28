@@ -1,4 +1,5 @@
 import pathlib
+import pickle
 import tempfile
 import unittest
 from collections import namedtuple
@@ -233,6 +234,119 @@ class TestPythonBindings(unittest.TestCase):
                 with self.assertRaises(desb.ConfigurationError):
                     check_metric_verifier_failure(load.path, load.options)
                 
+
+class TestGkBindings(unittest.TestCase):
+    @staticmethod
+    def make_graph_and_key():
+        entity = desb.gk_verification.NodeKind.ENTITY
+        wildcard = desb.gk_verification.VarKind.WILDCARD
+        entity_var = desb.gk_verification.VarKind.ENTITY
+
+        x = desb.gk_verification.Variable(entity_var, "x")
+        y = desb.gk_verification.Variable(wildcard, "y")
+        key = desb.gk_verification.GraphKey(
+            [desb.gk_verification.PatternTriple(x, "p", y)],
+            {x: "X", y: "Y"},
+            x,
+        )
+
+        graph = [
+            desb.gk_verification.Triple(
+                desb.gk_verification.Node(entity, "a", "X"),
+                "p",
+                desb.gk_verification.Node(entity, "a_target", "Y"),
+            ),
+            desb.gk_verification.Triple(
+                desb.gk_verification.Node(entity, "b", "X"),
+                "p",
+                desb.gk_verification.Node(entity, "b_target", "Y"),
+            ),
+        ]
+        return graph, key
+
+    def test_gk_model_and_key_data_model(self):
+        _, key = self.make_graph_and_key()
+
+        self.assertEqual(key, pickle.loads(pickle.dumps(key)))
+        self.assertEqual(len({key, pickle.loads(pickle.dumps(key))}), 1)
+        self.assertIn("GraphKey", str(key))
+        self.assertEqual(key.root.name, "x")
+        self.assertEqual(len(key.pattern), 1)
+        self.assertEqual(key.types[key.root], "X")
+
+        y = key.pattern[0].object
+        z = desb.gk_verification.Variable(desb.gk_verification.VarKind.WILDCARD, "z")
+        reordered = desb.gk_verification.GraphKey(
+            [
+                desb.gk_verification.PatternTriple(y, "q", z),
+                desb.gk_verification.PatternTriple(key.root, "p", y),
+            ],
+            {key.root: "X", y: "Y", z: "Z"},
+            key.root,
+        )
+        same_semantics = desb.gk_verification.GraphKey(
+            list(reversed(reordered.pattern)), reordered.types, reordered.root
+        )
+        self.assertEqual(reordered, same_semantics)
+
+    def test_gk_validator_uses_the_shared_graph_key_type(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+
+        self.assertEqual(validator._get_option_type("gk_graph"),
+                         (list, desb.gk_verification.Triple))
+        self.assertEqual(validator._get_option_type("gk_key"),
+                         (desb.gk_verification.GraphKey,))
+
+        validator.load_data(gk_graph=graph, gk_key=key)
+        self.assertEqual(validator.get_opts()["gk_key"], key)
+        self.assertEqual(validator.get_opts()["gk_graph"], graph)
+
+        validator.execute()
+
+        self.assertFalse(validator.holds)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        self.assertEqual(len(validator.get_violations()), 1)
+
+        stats = validator.timing_stats
+        self.assertIsInstance(stats, desb.gk_verification.ValidationTimingStats)
+        self.assertEqual(stats.graph_triple_count, len(graph))
+        self.assertEqual(stats.graph_entity_count, 4)
+        self.assertEqual(stats.root_candidate_count, 2)
+        self.assertEqual(stats.root_pair_count, 1)
+        self.assertEqual(stats.checked_pair_count, 1)
+        self.assertEqual(stats.violation_count, 1)
+        self.assertEqual(stats.load_source_ns, 0)
+        self.assertGreater(stats.load_total_ns, 0)
+        self.assertGreater(stats.execute_total_ns, 0)
+
+    def test_gk_validator_loads_graph_from_tsv_path(self):
+        _, key = self.make_graph_and_key()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.tsv"
+            path.write_text(
+                'subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n'
+                'a\tX\tp\tentity\ttarget\tY\n'
+                'b\tX\tp\tentity\ttarget\tY\n'
+            )
+
+            validator = desb.gk_verification.algorithms.GkValidator()
+            self.assertEqual(validator._get_option_type("gk_graph_path"), (str,))
+            validator.load_data(gk_graph_path=path, gk_key=key)
+            self.assertEqual(str(validator.get_opts()["gk_graph_path"]), str(path))
+            validator.execute()
+
+            self.assertFalse(validator.holds)
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+
+    def test_gk_future_option_is_not_silently_ignored(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+
+        with self.assertRaises(RuntimeError):
+            validator.execute(use_pairing_filter=True)
+
 
 
 class TestMaxFEM(unittest.TestCase):

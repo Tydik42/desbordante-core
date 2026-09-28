@@ -207,6 +207,16 @@ desbordante_add_bind(
 )
 
 desbordante_add_bind(
+    gk
+    SRCS
+    gk/bind_gk.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk::validator
+    magic_enum::magic_enum
+    Boost::headers
+)
+
+desbordante_add_bind(
     gspan SRCS gspan/bind_gspan.cpp LIBS ${DESBORDANTE_PREFIX}::fsm::gspan Boost::headers
 )
 
