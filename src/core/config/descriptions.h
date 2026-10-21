@@ -132,9 +132,10 @@ constexpr auto kDTimeLimitSeconds = "max running time of the algorithm. Pass 0 t
 constexpr auto kDGfdData = "Path to file with GFD";
 constexpr auto kDGraphData = "Path to dot-file with graph";
 // GK
-constexpr auto kDGkGraphData = "Graph descriptor used by the graph-key validator";
+constexpr auto kDGkGraphData = "Graph descriptor used by graph-key algorithms";
 constexpr auto kDGkGraphPath = "Path to a GK graph in the supported CSV format";
 constexpr auto kDGkKeyData = "Graph-key descriptor used by the graph-key validator";
+constexpr auto kDGkKeysData = "Graph keys used for entity deduplication";
 constexpr auto kDGkUsePairingFilter =
         "Use the P^Q pairing relation to discard root pairs before EvalGK";
 constexpr auto kDGkUseSubgraphReduction =

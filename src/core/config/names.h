@@ -91,6 +91,7 @@ constexpr auto kGraphData = "graph";
 constexpr auto kGkGraphData = "gk_graph";
 constexpr auto kGkGraphPath = "gk_graph_path";
 constexpr auto kGkKeyData = "gk_key";
+constexpr auto kGkKeysData = "gk_keys";
 constexpr auto kGkUsePairingFilter = "use_pairing_filter";
 constexpr auto kGkUseSubgraphReduction = "use_subgraph_reduction";
 // gSpan
