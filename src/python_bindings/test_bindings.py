@@ -320,14 +320,14 @@ class TestGkBindings(unittest.TestCase):
         self.assertGreater(stats.load_total_ns, 0)
         self.assertGreater(stats.execute_total_ns, 0)
 
-    def test_gk_validator_loads_graph_from_tsv_path(self):
+    def test_gk_validator_loads_graph_from_csv_path(self):
         _, key = self.make_graph_and_key()
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "graph.tsv"
+            path = pathlib.Path(directory) / "graph.csv"
             path.write_text(
-                'subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n'
-                'a\tX\tp\tentity\ttarget\tY\n'
-                'b\tX\tp\tentity\ttarget\tY\n'
+                'subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n'
+                '"a,quoted",X,p,entity,"target ""Y""",Y\n'
+                'b,X,p,entity,"target ""Y""",Y\n'
             )
 
             validator = desb.gk_verification.algorithms.GkValidator()
@@ -337,7 +337,7 @@ class TestGkBindings(unittest.TestCase):
             validator.execute()
 
             self.assertFalse(validator.holds)
-            self.assertEqual(validator.get_violations(), [("a", "b")])
+            self.assertEqual(validator.get_violations(), [("a,quoted", "b")])
 
     def test_gk_future_option_is_not_silently_ignored(self):
         graph, key = self.make_graph_and_key()

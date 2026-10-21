@@ -1,6 +1,6 @@
 """Minimal GK validation example.
 
-The first graph is read from a GK TSV file.  The second graph is assembled in
+The first graph is read from a GK CSV file.  The second graph is assembled in
 memory.  GraphKey is constructed in Python in both cases because the current
 GK PoC does not expose a GraphKey file parser yet.
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 import desbordante
 
 
-GRAPH_FILE = Path(__file__).resolve().parents[1] / "datasets" / "gk" / "simple_graph.tsv"
+GRAPH_FILE = Path(__file__).resolve().parents[1] / "datasets" / "gk" / "simple_graph.csv"
 
 
 def make_key():

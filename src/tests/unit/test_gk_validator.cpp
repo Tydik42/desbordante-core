@@ -124,11 +124,11 @@ Graph ThreeRootViolationsGraph() {
             {Entity("foreign", "Z"), "p", target}};
 }
 
-std::filesystem::path WriteTempGraph(std::string_view tsv, std::string_view file_name) {
+std::filesystem::path WriteTempGraph(std::string_view csv, std::string_view file_name) {
     std::filesystem::path const path = std::filesystem::temp_directory_path() / file_name;
     std::ofstream file(path);
     if (!file) throw std::runtime_error("Could not create temporary GK graph file");
-    file << tsv;
+    file << csv;
     return path;
 }
 
@@ -458,15 +458,15 @@ TEST(GkValidatorTest, GkValidatorRegistersOptionsAndAppliesDefaults) {
     EXPECT_FALSE(boost::any_cast<bool>(values.at(config::names::kGkUseSubgraphReduction).value));
 }
 
-TEST(GkValidatorTest, GkValidatorLoadsStringIdsAndAttributesFromTsvPath) {
+TEST(GkValidatorTest, GkValidatorLoadsStringIdsAndAttributesFromCsvPath) {
     std::filesystem::path const path = WriteTempGraph(
-            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n"
-            "a\tX\tname\tvalue\tAlice\t-\n"
-            "b\tX\tname\tvalue\tBob\t-\n"
-            "target\tY\tname\tvalue\tShared\t-\n"
-            "a\tX\tp\tentity\ttarget\tY\n"
-            "b\tX\tp\tentity\ttarget\tY\n",
-            "desbordante_gk_validator_graph.tsv");
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,name,value,Alice,-\n"
+            "b,X,name,value,Bob,-\n"
+            "target,Y,name,value,Shared,-\n"
+            "a,X,p,entity,target,Y\n"
+            "b,X,p,entity,target,Y\n",
+            "desbordante_gk_validator_graph.csv");
 
     Graph const parsed_graph = gk::parser::ReadGraph(path);
     EXPECT_TRUE(std::any_of(parsed_graph.begin(), parsed_graph.end(), [](Triple const& triple) {
@@ -495,24 +495,36 @@ TEST(GkValidatorTest, GkValidatorRejectsTwoGraphSources) {
     algos::GkValidator validator;
     validator.SetOption(config::names::kGkGraphData, boost::any{SharedTargetGraph()});
     validator.SetOption(config::names::kGkGraphPath,
-                        boost::any{std::filesystem::path{"does-not-matter.tsv"}});
+                        boost::any{std::filesystem::path{"does-not-matter.csv"}});
     validator.SetOption(config::names::kGkKeyData, boost::any{OneEdgeEntityKey()});
 
     EXPECT_THROW(validator.LoadData(), config::ConfigurationError);
 }
 
-TEST(GkValidatorTest, GkValidatorRejectsMalformedGkTsv) {
+TEST(GkValidatorTest, GkValidatorRejectsMalformedGkCsv) {
     std::vector<std::string> const malformed_inputs = {
             "wrong_header\n",
-            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n"
-            "a\tX\tp\tentity\ttarget\n",
-            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n"
-            "a\tX\tp\tunknown\ttarget\tY\n",
-            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n"
-            "a\tX\tp\tvalue\tAlice\tY\n",
-            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n"
-            "a\tX\tp\tentity\ttarget\tY\n"
-            "target\tZ\tq\tvalue\tvalue\t-\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,entity,target\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,unknown,target,Y\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,Alice,Y\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,entity,target,Y\n"
+            "target,Z,q,value,value,-\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,extra,-,field\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,\"unterminated\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,\"closed\"suffix,-\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,bare\"quote,-\n",
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n"
+            "a,X,p,value,,-\n",
+            "subject_id\tsubject_type\tpredicate\tobject_kind\tobject_id_or_value\tobject_type\n",
+            "",
     };
 
     for (std::string const& input : malformed_inputs) {
@@ -520,6 +532,39 @@ TEST(GkValidatorTest, GkValidatorRejectsMalformedGkTsv) {
         std::istringstream stream(input);
         EXPECT_THROW(gk::parser::ReadGraph(stream), std::runtime_error);
     }
+}
+
+TEST(GkValidatorTest, GkValidatorCsvPreservesQuotedFieldsAndLineEndings) {
+    std::vector<std::pair<std::string, std::string>> const values = {
+            {"\"Alice, \"\"A\"\"\"", "Alice, \"A\""},
+            {"\"first\n\nsecond\"", "first\n\nsecond"},
+            {"\"first\r\nsecond\"", "first\r\nsecond"},
+            {"\" a\t\\n \"", " a\t\\n "},
+            {"C:\\tmp", "C:\\tmp"},
+            {"Привет", "Привет"},
+    };
+    for (auto const& [encoded, expected] : values) {
+        SCOPED_TRACE(encoded);
+        for (std::string const ending : {"\n", "\r\n"}) {
+            std::istringstream stream(ending +
+                                      "\"subject_id\",subject_type,predicate,object_kind,object_id_"
+                                      "or_value,object_type" +
+                                      ending + "\"a,one\",X,\"name\"\"quoted\",value," + encoded +
+                                      ",-");
+            Graph const graph = gk::parser::ReadGraph(stream);
+            ASSERT_EQ(graph.size(), 1U);
+            EXPECT_EQ(graph[0].subject, Entity("a,one", "X"));
+            EXPECT_EQ(graph[0].predicate, "name\"quoted");
+            EXPECT_EQ(graph[0].object, Value(expected));
+        }
+    }
+}
+
+TEST(GkValidatorTest, GkValidatorCsvAcceptsHeaderOnlyAndEmptyRecords) {
+    std::istringstream stream(
+            "\r\nsubject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\r\n"
+            "\n\r\n");
+    EXPECT_TRUE(gk::parser::ReadGraph(stream).empty());
 }
 
 TEST(GkValidatorTest, GkValidatorAcceptsValidDescriptorsAndEmptyGraph) {
