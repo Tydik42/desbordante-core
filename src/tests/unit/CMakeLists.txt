@@ -455,6 +455,17 @@ desbordante_add_test(
     Boost::headers
 )
 
+desbordante_add_test(
+    gk.deduplicator
+    SRCS
+    test_gk_deduplicator.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk::chase
+    ${DESBORDANTE_PREFIX}::gk::deduplicator
+    ${DESBORDANTE_PREFIX}::config
+    Boost::headers
+)
+
 # --- FSM ---
 desbordante_add_test(
     fsm.gspan
