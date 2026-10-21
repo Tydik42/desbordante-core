@@ -57,9 +57,6 @@ private:
     bool use_pairing_filter_ = false;
     bool use_subgraph_reduction_ = false;
 
-    static void CheckGraph(gk::model::Graph const& graph);
-    static void CheckKey(gk::model::GraphKey const& key);
-
     void RegisterOptions();
     void MakeExecuteOptsAvailable() final;
     void LoadDataInternal() final;

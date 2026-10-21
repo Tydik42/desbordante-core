@@ -84,8 +84,8 @@ bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) c
         return false;
     }
 
-    LOG_TRACE("EvalGK started for roots ('{}', '{}'), Eq size={}", input.first_root.id_or_val,
-              input.second_root.id_or_val, eq.GetRelation().size());
+    LOG_TRACE("EvalGK started for roots ('{}', '{}'), Eq classes={}", input.first_root.id_or_val,
+              input.second_root.id_or_val, eq.GetClassCount());
     JointMapping m;
     m.Bind(input.first_root, input.second_root, key_.root_x);
 

@@ -141,8 +141,8 @@ TEST(GkValidatorTest, GkValidatorEquivalenceRelationKeepsClosure) {
     EXPECT_TRUE(eq.AreEquivalent("b", "b"));
     EXPECT_FALSE(eq.AreEquivalent("a", "b"));
 
-    eq.Merge("a", "b");
-    eq.Merge("b", "c");
+    EXPECT_TRUE(eq.Merge("a", "b"));
+    EXPECT_TRUE(eq.Merge("b", "c"));
 
     for (std::string const& lhs : {"a", "b", "c"}) {
         for (std::string const& rhs : {"a", "b", "c"}) {
@@ -151,11 +151,16 @@ TEST(GkValidatorTest, GkValidatorEquivalenceRelationKeepsClosure) {
     }
 
     std::size_t const relation_size = eq.GetRelation().size();
-    eq.Merge("a", "c");
+    EXPECT_FALSE(eq.Merge("a", "c"));
     eq.AddEntity("d");
     EXPECT_EQ(eq.GetRelation().size(), relation_size + 1);
     EXPECT_TRUE(eq.AreEquivalent("d", "d"));
     EXPECT_FALSE(eq.AreEquivalent("a", "d"));
+    eq.AddEntity("d");
+    EXPECT_EQ(eq.GetEntityCount(), 4U);
+    EXPECT_EQ(eq.GetClassCount(), 2U);
+    EXPECT_EQ(eq.GetClasses(), (gk::EquivalenceRelation::Classes{{"a", "b", "c"}, {"d"}}));
+    EXPECT_FALSE(eq.AreEquivalent("unknown", "unknown"));
 }
 
 TEST(GkValidatorTest, GkValidatorJointMappingSupportsLifecycleAndInjectivity) {
