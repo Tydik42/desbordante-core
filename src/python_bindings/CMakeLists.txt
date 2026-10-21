@@ -212,6 +212,7 @@ desbordante_add_bind(
     gk/bind_gk.cpp
     LIBS
     ${DESBORDANTE_PREFIX}::gk::validator
+    ${DESBORDANTE_PREFIX}::gk::deduplicator
     magic_enum::magic_enum
     Boost::headers
 )

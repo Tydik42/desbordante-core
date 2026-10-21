@@ -16,6 +16,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <pybind11/stl.h>
 
+#include "core/algorithms/gk/gk_deduplicator/gk_deduplicator.h"
 #include "core/algorithms/gk/gk_validator/gk_validator.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 #include "python_bindings/py_util/bind_primitive.h"
@@ -327,6 +328,43 @@ void BindGk(pybind11::module_& main_module) {
                  [](algos::GkValidator const& validator) { return validator.GetViolations(); })
             .def_property_readonly("timing_stats", [](algos::GkValidator const& validator) {
                 return validator.GetTimingStats();
+            });
+
+    auto dedup_module = main_module.def_submodule("gk_deduplication");
+    // Both algorithms accept the exact same descriptors, not separately registered copies.
+    for (auto const* name :
+         {"NodeKind", "VarKind", "Node", "Variable", "Triple", "PatternTriple", "GraphKey"}) {
+        dedup_module.attr(name) = gk_module.attr(name);
+    }
+    py::class_<gk::ChaseStatistics>(dedup_module, "ChaseStatistics")
+            .def_readonly("prepare_ns", &gk::ChaseStatistics::prepare_ns)
+            .def_readonly("eval_ns", &gk::ChaseStatistics::eval_ns)
+            .def_readonly("finalize_ns", &gk::ChaseStatistics::finalize_ns)
+            .def_readonly("total_ns", &gk::ChaseStatistics::total_ns)
+            .def_readonly("entity_count", &gk::ChaseStatistics::entity_count)
+            .def_readonly("root_pair_count", &gk::ChaseStatistics::root_pair_count)
+            .def_readonly("checked_pair_count", &gk::ChaseStatistics::checked_pair_count)
+            .def_readonly("eval_call_count", &gk::ChaseStatistics::eval_call_count)
+            .def_readonly("merge_count", &gk::ChaseStatistics::merge_count)
+            .def_readonly("pass_count", &gk::ChaseStatistics::pass_count);
+    py::class_<gk::DeduplicationTimingStats>(dedup_module, "DeduplicationTimingStats")
+            .def_readonly("load_source_ns", &gk::DeduplicationTimingStats::load_source_ns)
+            .def_readonly("load_graph_check_ns", &gk::DeduplicationTimingStats::load_graph_check_ns)
+            .def_readonly("load_keys_check_ns", &gk::DeduplicationTimingStats::load_keys_check_ns)
+            .def_readonly("load_total_ns", &gk::DeduplicationTimingStats::load_total_ns)
+            .def_readonly("execute_total_ns", &gk::DeduplicationTimingStats::execute_total_ns)
+            .def_readonly("graph_triple_count", &gk::DeduplicationTimingStats::graph_triple_count)
+            .def_readonly("key_count", &gk::DeduplicationTimingStats::key_count)
+            .def_readonly("execution", &gk::DeduplicationTimingStats::execution);
+    BindPrimitiveNoBase<algos::GkDeduplicator>(dedup_module, "GkDeduplicator")
+            .def("get_clusters",
+                 [](algos::GkDeduplicator const& deduplicator) {
+                     return deduplicator.GetClusters();
+                 })
+            .def_property_readonly("cluster_count", &algos::GkDeduplicator::GetClusterCount)
+            .def_property_readonly("merge_count", &algos::GkDeduplicator::GetMergeCount)
+            .def_property_readonly("timing_stats", [](algos::GkDeduplicator const& deduplicator) {
+                return deduplicator.GetTimingStats();
             });
 }
 

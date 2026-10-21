@@ -234,6 +234,7 @@ std::unordered_map<std::type_index, ConvFunc> const kConverters{
         kNormalConvPair<std::vector<unsigned int>>,
         kNormalConvPair<gk::model::Graph>,
         kNormalConvPair<gk::model::GraphKey>,
+        kNormalConvPair<std::vector<gk::model::GraphKey>>,
         kNormalConvPair<unsigned short>,
         kNormalConvPair<int>,
         kNormalConvPair<size_t>,

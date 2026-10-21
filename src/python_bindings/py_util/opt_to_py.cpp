@@ -59,6 +59,7 @@ std::unordered_map<std::type_index, ConvFunction> const kConverters{
         kNormalConvPair<std::vector<double>>,
         kNormalConvPair<gk::model::Graph>,
         kNormalConvPair<gk::model::GraphKey>,
+        kNormalConvPair<std::vector<gk::model::GraphKey>>,
         kNormalConvPair<config::ThreadNumType>,
         kNormalConvPair<config::CustomRandomSeedType>,
         kNormalConvPair<config::MaxLhsType>,

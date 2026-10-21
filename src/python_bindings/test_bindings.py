@@ -349,6 +349,92 @@ class TestGkBindings(unittest.TestCase):
 
 
 
+class TestGkDeduplicationBindings(unittest.TestCase):
+    @staticmethod
+    def make_graph_and_keys():
+        gk = desb.gk_verification
+        x = gk.Variable(gk.VarKind.ENTITY, "x")
+        y = gk.Variable(gk.VarKind.ENTITY, "y")
+        value = gk.Variable(gk.VarKind.VALUE, "value")
+        entity_key = gk.GraphKey([gk.PatternTriple(x, "p", y)], {x: "A", y: "Z"}, x)
+        value_key = gk.GraphKey([gk.PatternTriple(x, "code", value)], {x: "Z"}, x)
+
+        def entity(identifier, entity_type):
+            return gk.Node(gk.NodeKind.ENTITY, identifier, entity_type)
+
+        graph = [
+            gk.Triple(entity("a", "A"), "p", entity("c1", "Z")),
+            gk.Triple(entity("b", "A"), "p", entity("c2", "Z")),
+            gk.Triple(entity("c1", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
+            gk.Triple(entity("c2", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
+        ]
+        return graph, [entity_key, value_key]
+
+    def test_shared_descriptors_clusters_and_repeated_execution(self):
+        module = desb.gk_deduplication
+        self.assertIs(module.GraphKey, desb.gk_verification.GraphKey)
+        graph, keys = self.make_graph_and_keys()
+        algorithm = module.algorithms.GkDeduplicator()
+        self.assertEqual(algorithm._get_option_type("gk_keys"), (list, module.GraphKey))
+        algorithm.load_data(gk_graph=graph, gk_keys=keys)
+        self.assertEqual(algorithm.get_opts()["gk_keys"], keys)
+        self.assertEqual(algorithm.get_opts()["gk_graph"], graph)
+        for _ in range(2):
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            self.assertEqual(algorithm.cluster_count, 2)
+            self.assertEqual(algorithm.merge_count, 2)
+            stats = algorithm.timing_stats
+            self.assertIsInstance(stats, module.DeduplicationTimingStats)
+            self.assertEqual(stats.key_count, 2)
+            self.assertEqual(stats.graph_triple_count, 4)
+            self.assertEqual(stats.execution.entity_count, 4)
+            self.assertEqual(stats.execution.merge_count, 2)
+            self.assertGreaterEqual(stats.execution.pass_count, 3)
+            self.assertGreaterEqual(stats.execute_total_ns, stats.execution.total_ns)
+            clusters = algorithm.get_clusters()
+            clusters[0].clear()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_loads_existing_csv_and_preserves_singletons_without_keys(self):
+        _, keys = self.make_graph_and_keys()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            path.write_text(
+                'subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n'
+                '"a,quoted",A,p,entity,c1,Z\n'
+                'b,A,p,entity,c2,Z\n'
+                'c1,Z,code,value,shared,-\n'
+                'c2,Z,code,value,shared,-\n'
+            )
+            for input_keys, expected in [
+                (keys, [["a,quoted", "b"], ["c1", "c2"]]),
+                ([], [["a,quoted"], ["b"], ["c1"], ["c2"]]),
+            ]:
+                algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+                algorithm.load_data(gk_graph_path=path, gk_keys=input_keys)
+                algorithm.execute()
+                self.assertEqual(algorithm.get_clusters(), expected)
+                self.assertGreater(algorithm.timing_stats.load_source_ns, 0)
+        algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+        algorithm.load_data(gk_graph=[], gk_keys=[])
+        algorithm.execute()
+        self.assertEqual(algorithm.get_clusters(), [])
+        self.assertEqual(algorithm.merge_count, 0)
+
+    def test_future_options_fail_explicitly_and_allow_retry(self):
+        graph, keys = self.make_graph_and_keys()
+        algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+        algorithm.load_data(gk_graph=graph, gk_keys=keys)
+        for option in ("use_pairing_filter", "use_subgraph_reduction"):
+            with self.assertRaises(RuntimeError):
+                algorithm.execute(**{option: True})
+            self.assertEqual(algorithm.get_clusters(), [])
+            self.assertEqual(algorithm.merge_count, 0)
+            algorithm.execute(use_pairing_filter=False, use_subgraph_reduction=False)
+            self.assertEqual(algorithm.merge_count, 2)
+
+
 class TestMaxFEM(unittest.TestCase):
     # Sequence: event 1 three times, event 2 twice (infrequent at minsup=3),
     # window_size=1 prevents composite episodes.
