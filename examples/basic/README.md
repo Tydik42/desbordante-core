@@ -36,6 +36,7 @@ These scenarios showcase a single pattern by discussing its definition and provi
 + [verifying_fd_afd.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_fd_afd.py) — a scenario showing how to verify exact and approximate functional dependencies.
 + [verifying_gdd](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_gdd) — a scenario showing how to verify a graph differential dependency.
 + [verifying_gfd](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_gfd) — a scenario showing how to verify a graph functional dependency.
++ [verifying_gk.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_gk.py) — a scenario showing how to validate a graph key from a file and an in-memory graph.
 + [verifying_ind_aind.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_ind_aind.py) — a scenario showing how to verify an approximate and exact inclusion dependencies.
 + [verifying_md.py](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_md.py) — a scenario showing how to verify a matching dependency.
 + [verifying_nd](https://github.com/Desbordante/desbordante-core/tree/main/examples/basic/verifying_nd) — a scenario showing how to verify a numerical dependency.

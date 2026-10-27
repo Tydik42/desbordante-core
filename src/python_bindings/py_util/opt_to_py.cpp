@@ -1,5 +1,6 @@
 #include "python_bindings/py_util/opt_to_py.h"
 
+#include <filesystem>
 #include <functional>
 #include <sstream>
 #include <stdexcept>
@@ -8,11 +9,13 @@
 
 #include <boost/core/demangle.hpp>
 #include <pybind11/stl.h>
+#include <pybind11/stl/filesystem.h>
 
 #include "core/algorithms/cfd/model/raw_cfd.h"
 #include "core/algorithms/dd/dd.h"
 #include "core/algorithms/fd/tane/enums.h"
 #include "core/algorithms/gdd/gdd.h"
+#include "core/algorithms/gk/graph_descriptor.h"
 #include "core/algorithms/md/hymd/enums.h"
 #include "core/algorithms/metric/enums.h"
 #include "core/algorithms/nar/des/enums.h"
@@ -51,8 +54,12 @@ std::unordered_map<std::type_index, ConvFunction> const kConverters{
         kNormalConvPair<unsigned int>,
         kNormalConvPair<unsigned long>,
         kNormalConvPair<bool>,
+        kNormalConvPair<std::filesystem::path>,
         kNormalConvPair<std::vector<std::string>>,
         kNormalConvPair<std::vector<double>>,
+        kNormalConvPair<gk::model::Graph>,
+        kNormalConvPair<gk::model::GraphKey>,
+        kNormalConvPair<std::vector<gk::model::GraphKey>>,
         kNormalConvPair<config::ThreadNumType>,
         kNormalConvPair<config::CustomRandomSeedType>,
         kNormalConvPair<config::MaxLhsType>,
