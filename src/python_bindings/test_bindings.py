@@ -339,14 +339,75 @@ class TestGkBindings(unittest.TestCase):
             self.assertFalse(validator.holds)
             self.assertEqual(validator.get_violations(), [("a,quoted", "b")])
 
-    def test_gk_future_option_is_not_silently_ignored(self):
+    def test_gk_reload_resets_execution_options(self):
         graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+        deduplicator = desb.gk_deduplication.algorithms.GkDeduplicator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+        deduplicator.load_data(gk_graph=graph, gk_keys=[key])
+        for algorithm in (validator, deduplicator):
+            for _ in range(2):
+                algorithm.load_data()
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                algorithm.execute(use_localization=True, use_pairing_filter=True,
+                                  use_subgraph_reduction=True)
+
+    def test_gk_optimizations_preserve_results_and_report_filtering(self):
+        graph, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        graph.append(gk.Triple(gk.Node(gk.NodeKind.ENTITY, "c", "X"),
+                               "other", gk.Node(gk.NodeKind.VALUE, "unrelated")))
         validator = desb.gk_verification.algorithms.GkValidator()
         validator.load_data(gk_graph=graph, gk_key=key)
 
-        with self.assertRaises(RuntimeError):
-            validator.execute(use_pairing_filter=True)
+        for localization, pairing, reduction in [(False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)]:
+            with self.subTest(pairing=pairing, reduction=reduction):
+                validator.execute(use_localization=localization, use_pairing_filter=pairing,
+                                  use_subgraph_reduction=reduction)
+                self.assertEqual(validator.get_violations(), [("a", "b")])
+                stats = validator.timing_stats.evaluation
+                self.assertIsInstance(stats, gk.EvaluationStatistics)
+                self.assertEqual(stats.pairing_check_count, 3 if pairing or reduction else 0)
+                self.assertEqual(stats.filtered_pair_count, 2 if pairing or reduction else 0)
+                self.assertEqual(stats.search_call_count, 1 if pairing or reduction else 3)
+                self.assertEqual(stats.reduced_triple_count, 2 if reduction else 0)
 
+
+
+    def test_gk_options_follow_config_dependencies(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+        deduplicator = desb.gk_deduplication.algorithms.GkDeduplicator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+        deduplicator.load_data(gk_graph=graph, gk_keys=[key])
+        for algorithm in (validator, deduplicator):
+            with self.subTest(algorithm=type(algorithm).__name__):
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                for flag in ("use_localization", "use_pairing_filter", "use_subgraph_reduction"):
+                    self.assertEqual(algorithm._get_option_type(flag), (bool,))
+                with self.assertRaises(ValueError):
+                    algorithm.execute(use_pairing_filter=True)
+                with self.assertRaises(ValueError):
+                    algorithm.execute(use_localization=True, use_subgraph_reduction=True)
+                algorithm.execute(use_subgraph_reduction=True, use_pairing_filter=True,
+                                  use_localization=True)
+                self.assertGreater(algorithm.timing_stats.evaluation.pairing_check_count
+                                   if algorithm is validator else
+                                   algorithm.timing_stats.execution.evaluation.pairing_check_count, 0)
+                algorithm._set_option("use_localization", True)
+                algorithm._set_option("use_pairing_filter", True)
+                algorithm._set_option("use_subgraph_reduction", True)
+                algorithm._set_option("use_localization", False)
+                with self.assertRaises(ValueError):
+                    algorithm._set_option("use_subgraph_reduction", True)
+                algorithm.execute()
+                stats = algorithm.timing_stats.evaluation if algorithm is validator else \
+                    algorithm.timing_stats.execution.evaluation
+                self.assertEqual(stats.pairing_check_count, 0)
+                self.assertEqual(stats.neighborhood_triple_count, 0)
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
 
 
 class TestGkDeduplicationBindings(unittest.TestCase):
@@ -422,17 +483,23 @@ class TestGkDeduplicationBindings(unittest.TestCase):
         self.assertEqual(algorithm.get_clusters(), [])
         self.assertEqual(algorithm.merge_count, 0)
 
-    def test_future_options_fail_explicitly_and_allow_retry(self):
+    def test_optimizations_preserve_recursive_chase_and_reset_statistics(self):
         graph, keys = self.make_graph_and_keys()
         algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
         algorithm.load_data(gk_graph=graph, gk_keys=keys)
-        for option in ("use_pairing_filter", "use_subgraph_reduction"):
-            with self.assertRaises(RuntimeError):
-                algorithm.execute(**{option: True})
-            self.assertEqual(algorithm.get_clusters(), [])
-            self.assertEqual(algorithm.merge_count, 0)
-            algorithm.execute(use_pairing_filter=False, use_subgraph_reduction=False)
-            self.assertEqual(algorithm.merge_count, 2)
+        for localization, pairing, reduction in [(False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)]:
+            with self.subTest(pairing=pairing, reduction=reduction):
+                algorithm.execute(use_localization=localization, use_pairing_filter=pairing,
+                                  use_subgraph_reduction=reduction)
+                self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+                self.assertEqual(algorithm.merge_count, 2)
+                execution = algorithm.timing_stats.execution
+                self.assertEqual(execution.evaluation.pairing_check_count,
+                                 execution.eval_call_count if pairing or reduction else 0)
+                self.assertEqual(execution.evaluation.filtered_pair_count, 0)
+                self.assertGreater(execution.evaluation.search_call_count, 0)
 
 
 class TestMaxFEM(unittest.TestCase):

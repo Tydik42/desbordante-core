@@ -49,7 +49,17 @@ struct Variable {
 
 }  // namespace gk::model
 
-// TODO: workaround for joint mapping
+template <>
+struct std::hash<gk::model::Node> {
+    std::size_t operator()(gk::model::Node const& node) const {
+        auto hash = std::hash<std::string>{}(node.id_or_val);
+        hash ^= std::hash<int>{}(static_cast<int>(node.kind)) + (hash << 6U) + (hash >> 2U);
+        if (node.kind == gk::model::NodeKind::kEntity)
+            hash ^= std::hash<std::string>{}(node.type) + (hash << 6U) + (hash >> 2U);
+        return hash;
+    }
+};
+
 template <>
 struct std::hash<gk::model::Variable> {
     std::size_t operator()(gk::model::Variable const& v) const {

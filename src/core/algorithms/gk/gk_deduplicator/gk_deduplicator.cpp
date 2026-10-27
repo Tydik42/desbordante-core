@@ -5,6 +5,7 @@
 
 #include "core/algorithms/gk/parser/gk_graph_parser.h"
 #include "core/algorithms/gk/validation.h"
+#include "core/config/gk/option.h"
 #include "core/config/names_and_descriptions.h"
 #include "core/util/logger.h"
 
@@ -34,18 +35,21 @@ void GkDeduplicator::RegisterOptions() {
     RegisterOption(config::Option{&graph_path_, kGkGraphPath, kDGkGraphPath}.SetIsRequiredFunc(
             [this] { return !OptionIsSet(kGkGraphData); }));
     RegisterOption(config::Option{&keys_, kGkKeysData, kDGkKeysData});
-    RegisterOption(
-            config::Option{&use_pairing_filter_, kGkUsePairingFilter, kDGkUsePairingFilter, false});
-    RegisterOption(config::Option{&use_subgraph_reduction_, kGkUseSubgraphReduction,
-                                  kDGkUseSubgraphReduction, false});
+    RegisterOption(config::kGkUseLocalizationOpt(&use_localization_)
+                           .SetConditionalOpts({{[](bool enabled) { return enabled; },
+                                                 {kGkUsePairingFilter}}}));
+    RegisterOption(config::kGkUsePairingFilterOpt(&use_pairing_filter_)
+                           .SetConditionalOpts({{[](bool enabled) { return enabled; },
+                                                 {kGkUseSubgraphReduction}}}));
+    RegisterOption(config::kGkUseSubgraphReductionOpt(&use_subgraph_reduction_));
 }
 
 void GkDeduplicator::MakeExecuteOptsAvailable() {
-    MakeOptionsAvailable(
-            {config::names::kGkUsePairingFilter, config::names::kGkUseSubgraphReduction});
+    MakeOptionsAvailable({config::names::kGkUseLocalization});
 }
 
 void GkDeduplicator::LoadDataInternal() {
+    UnsetOption(config::names::kGkUseLocalization);
     auto const started_at = std::chrono::steady_clock::now();
     engine_.reset();
     result_ = {};
@@ -76,30 +80,36 @@ void GkDeduplicator::LoadDataInternal() {
 }
 
 void GkDeduplicator::ResetState() {
+    if (!OptionIsSet(config::names::kGkUsePairingFilter)) use_pairing_filter_ = false;
+    if (!OptionIsSet(config::names::kGkUseSubgraphReduction)) use_subgraph_reduction_ = false;
     result_ = {};
     timing_stats_.execution = {};
     timing_stats_.execute_total_ns = 0;
 }
 
 void GkDeduplicator::ExecuteInternal() {
-    auto const started_at = std::chrono::steady_clock::now();
-    if (!engine_) throw std::logic_error("GK deduplication data has not been loaded successfully");
-    if (use_pairing_filter_ || use_subgraph_reduction_) {
-        // Algorithm clears execution options only after success. Leave unsupported flags
-        // configurable so a subsequent Python execute() can retry with supported defaults.
-        UnsetOption(config::names::kGkUsePairingFilter);
-        UnsetOption(config::names::kGkUseSubgraphReduction);
-        throw std::logic_error(
-                "GK pairing filtering and subgraph reduction are not implemented "
-                "in the sequential deduplicator");
+    try {
+        auto const started_at = std::chrono::steady_clock::now();
+        if (!engine_)
+            throw std::logic_error("GK deduplication data has not been loaded successfully");
+        LOG_INFO(
+                "Starting GK deduplication: {} graph triples, {} keys, localization={}, "
+                "pairing_filter={}, "
+                "subgraph_reduction={}",
+                graph_.size(), keys_.size(), use_localization_, use_pairing_filter_,
+                use_subgraph_reduction_);
+        result_ = engine_->Run(graph_, use_localization_, use_pairing_filter_,
+                               use_subgraph_reduction_);
+        timing_stats_.execution = result_.statistics;
+        timing_stats_.execute_total_ns = ElapsedNanoseconds(started_at);
+        LOG_INFO("GK deduplication complete: {} classes, {} merges, {} passes, elapsed={} ns",
+                 GetClusterCount(), GetMergeCount(), result_.statistics.pass_count,
+                 timing_stats_.execute_total_ns);
+    } catch (...) {
+        result_ = {};
+        UnsetOption(config::names::kGkUseLocalization);
+        throw;
     }
-    LOG_INFO("Starting GK deduplication: {} graph triples, {} keys", graph_.size(), keys_.size());
-    result_ = engine_->Run(graph_);
-    timing_stats_.execution = result_.statistics;
-    timing_stats_.execute_total_ns = ElapsedNanoseconds(started_at);
-    LOG_INFO("GK deduplication complete: {} classes, {} merges, {} passes, elapsed={} ns",
-             GetClusterCount(), GetMergeCount(), result_.statistics.pass_count,
-             timing_stats_.execute_total_ns);
 }
 
 }  // namespace algos

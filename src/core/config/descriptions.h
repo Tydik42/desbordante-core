@@ -137,9 +137,12 @@ constexpr auto kDGkGraphPath = "Path to a GK graph in the supported CSV format";
 constexpr auto kDGkKeyData = "Graph-key descriptor used by the graph-key validator";
 constexpr auto kDGkKeysData = "Graph keys used for entity deduplication";
 constexpr auto kDGkUsePairingFilter =
-        "Use the P^Q pairing relation to discard root pairs before EvalGK";
+        "Filter root pairs using P^Q; requires use_localization=true and enables "
+        "the use_subgraph_reduction option";
 constexpr auto kDGkUseSubgraphReduction =
-        "Reduce pair neighborhoods using P^Q before running EvalGK";
+        "Reduce localized graphs using P^Q; requires use_pairing_filter=true";
+constexpr auto kDGkUseLocalization =
+        "Search within induced root neighborhoods; enables the use_pairing_filter option";
 // GFD miner
 constexpr auto kDDoCollectViolations = "Flag which tells whether to collect violations or not";
 constexpr auto kDGfdK = "Max size of mined gfds";

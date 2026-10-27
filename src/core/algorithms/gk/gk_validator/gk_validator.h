@@ -2,11 +2,14 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "core/algorithms/algorithm.h"
+#include "core/algorithms/gk/evaluation_statistics.h"
 #include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/key.h"
 
 namespace gk {
 
@@ -36,6 +39,7 @@ struct ValidationTimingStats {
     std::size_t root_pair_count = 0;
     std::size_t checked_pair_count = 0;
     std::size_t violation_count = 0;
+    EvaluationStatistics evaluation;
 };
 
 }  // namespace gk
@@ -52,8 +56,10 @@ private:
     gk::model::Graph graph_;
     std::filesystem::path graph_path_;
     gk::model::GraphKey key_;
+    std::optional<gk::CompiledKey> compiled_key_;
     gk::ValidationResult result_{false, {}};
     gk::ValidationTimingStats timing_stats_;
+    bool use_localization_ = false;
     bool use_pairing_filter_ = false;
     bool use_subgraph_reduction_ = false;
 

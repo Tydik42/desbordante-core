@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -12,13 +13,25 @@
 
 #include <gtest/gtest.h>
 
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 #include "core/algorithms/gk/gk_deduplicator/gk_deduplicator.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 #include "core/config/exceptions.h"
 #include "core/config/names.h"
 
 namespace {
+
+constexpr std::array kExecutionModes{std::array{false, false, false},
+                                     std::array{true, false, false}, std::array{true, true, false},
+                                     std::array{true, true, true}};
+
+void ConfigureExecution(algos::Algorithm& algorithm, bool localization, bool pairing,
+                        bool reduction) {
+    using namespace config::names;
+    algorithm.SetOption(kGkUseLocalization, localization);
+    if (localization) algorithm.SetOption(kGkUsePairingFilter, pairing);
+    if (pairing) algorithm.SetOption(kGkUseSubgraphReduction, reduction);
+}
 
 using namespace gk::model;
 using Clusters = gk::EquivalenceRelation::Classes;
@@ -321,9 +334,13 @@ TEST(GkDeduplicatorTest, MatchesIndependentEmbeddingEnumerationOnSmallGraphs) {
             }
         }
         for (auto const& keys : key_sets) {
-            auto const result = gk::ChaseEngine(keys).Run(graph);
-            EXPECT_EQ(result.clusters, ReferenceChase(graph, keys));
-            EXPECT_EQ(result.statistics.merge_count, 3U - result.clusters.size());
+            auto const expected = ReferenceChase(graph, keys);
+            for (auto const [localization, pairing, reduction] : kExecutionModes) {
+                auto const result =
+                        gk::ChaseEngine(keys).Run(graph, localization, pairing, reduction);
+                EXPECT_EQ(result.clusters, expected);
+                EXPECT_EQ(result.statistics.merge_count, 3U - result.clusters.size());
+            }
         }
     }
 }
@@ -339,8 +356,7 @@ TEST(GkDeduplicatorTest, AdapterRegistersOptionsAndResetsExecutionStatistics) {
     algorithm.SetOption(kGkKeysData, DependentKeys());
     algorithm.LoadData();
     for (int iteration = 0; iteration < 2; ++iteration) {
-        algorithm.SetOption(kGkUsePairingFilter);
-        algorithm.SetOption(kGkUseSubgraphReduction);
+        algorithm.SetOption(kGkUseLocalization);
         algorithm.Execute();
         EXPECT_EQ(algorithm.GetClusters(), (Clusters{{"a", "b"}, {"c1", "c2"}}));
         EXPECT_EQ(algorithm.GetMergeCount(), 2U);
@@ -387,8 +403,7 @@ TEST(GkDeduplicatorTest, AdapterLoadsTheExistingCsvFormat) {
     algorithm.SetOption(kGkGraphPath, path);
     algorithm.SetOption(kGkKeysData, DependentKeys());
     algorithm.LoadData();
-    algorithm.SetOption(kGkUsePairingFilter);
-    algorithm.SetOption(kGkUseSubgraphReduction);
+    algorithm.SetOption(kGkUseLocalization);
     algorithm.Execute();
     EXPECT_EQ(algorithm.GetClusters(), (Clusters{{"a,quoted", "b"}, {"c1", "c2"}}));
     EXPECT_GT(algorithm.GetTimingStats().load_source_ns, 0U);
@@ -423,15 +438,14 @@ TEST(GkDeduplicatorTest, AdapterRejectsMissingAmbiguousAndInvalidInputs) {
     }
 }
 
-TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndRejectsUnsupportedOptimizations) {
+TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndSwitchesOptimizations) {
     using namespace config::names;
     for (Graph const& graph : {Graph{}, DependentGraph()}) {
         algos::GkDeduplicator algorithm;
         algorithm.SetOption(kGkGraphData, graph);
         algorithm.SetOption(kGkKeysData, std::vector<GraphKey>{});
         algorithm.LoadData();
-        algorithm.SetOption(kGkUsePairingFilter);
-        algorithm.SetOption(kGkUseSubgraphReduction);
+        algorithm.SetOption(kGkUseLocalization);
         algorithm.Execute();
         EXPECT_EQ(algorithm.GetMergeCount(), 0U);
         EXPECT_EQ(algorithm.GetClusters(), ReferenceChase(graph, {}));
@@ -441,17 +455,31 @@ TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndRejectsUnsupportedOptimization
     algorithm.SetOption(kGkGraphData, DependentGraph());
     algorithm.SetOption(kGkKeysData, DependentKeys());
     algorithm.LoadData();
-    for (auto const option : {kGkUsePairingFilter, kGkUseSubgraphReduction}) {
-        algorithm.SetOption(kGkUsePairingFilter, false);
-        algorithm.SetOption(kGkUseSubgraphReduction, false);
-        algorithm.SetOption(option, true);
-        EXPECT_THROW(algorithm.Execute(), std::logic_error);
-        EXPECT_TRUE(algorithm.GetClusters().empty());
-        EXPECT_EQ(algorithm.GetMergeCount(), 0U);
-        EXPECT_EQ(algorithm.GetTimingStats().execute_total_ns, 0U);
+    for (auto const [localization, pairing, reduction] : kExecutionModes) {
+        ConfigureExecution(algorithm, localization, pairing, reduction);
+        algorithm.Execute();
+        EXPECT_EQ(algorithm.GetClusters(), ReferenceChase(DependentGraph(), DependentKeys()));
+        EXPECT_EQ(algorithm.GetMergeCount(), 2U);
+        auto const& stats = algorithm.GetTimingStats().execution;
+        if (pairing) {
+            EXPECT_EQ(stats.evaluation.pairing_check_count, stats.eval_call_count);
+            // a/b must not be permanently filtered before c1/c2 become equivalent.
+            EXPECT_EQ(stats.evaluation.filtered_pair_count, 0U);
+            EXPECT_GT(stats.evaluation.search_call_count, 0U);
+        } else {
+            EXPECT_EQ(stats.evaluation.pairing_check_count, 0U);
+        }
     }
-    algorithm.SetOption(kGkUsePairingFilter, false);
-    algorithm.SetOption(kGkUseSubgraphReduction, false);
+    algorithm.SetOption(kGkUseLocalization, false);
     algorithm.Execute();
     EXPECT_EQ(algorithm.GetMergeCount(), 2U);
+}
+
+TEST(GkDeduplicatorTest, RejectsInvalidStageDependenciesBeforeVacuousExecution) {
+    gk::ChaseEngine engine({});
+    EXPECT_THROW(engine.Run({}, false, true, false), config::ConfigurationError);
+    EXPECT_THROW(engine.Run({}, true, false, true), config::ConfigurationError);
+    EXPECT_THROW(engine.Run({}, false, false, true), config::ConfigurationError);
+    for (auto const [localization, pairing, reduction] : kExecutionModes)
+        EXPECT_TRUE(engine.Run({}, localization, pairing, reduction).clusters.empty());
 }

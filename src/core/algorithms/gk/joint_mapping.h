@@ -11,6 +11,10 @@ class JointMapping {
 public:
     using Mapping = std::pair<model::Node, model::Node>;
 
+    void Reset() noexcept {
+        mapping_.clear();
+    }
+
     void Bind(model::Node const& v1, model::Node const& v2, model::Variable const& u) {
         mapping_[u] = {v1, v2};
     }
@@ -23,7 +27,7 @@ public:
         return mapping_.contains(u);
     }
 
-    Mapping const& Get(model::Variable const& u) const {
+    Mapping Get(model::Variable const& u) const {
         return mapping_.at(u);
     }
 

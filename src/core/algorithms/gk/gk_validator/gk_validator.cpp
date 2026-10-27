@@ -6,9 +6,10 @@
 #include <vector>
 
 #include "core/algorithms/gk/equivalence_relation.h"
-#include "core/algorithms/gk/gk_validator/eval_gk.h"
+#include "core/algorithms/gk/optimizations/evaluation.h"
 #include "core/algorithms/gk/parser/gk_graph_parser.h"
 #include "core/algorithms/gk/validation.h"
+#include "core/config/gk/option.h"
 #include "core/config/names_and_descriptions.h"
 #include "core/util/logger.h"
 
@@ -25,6 +26,8 @@ std::uint64_t ElapsedNanoseconds(std::chrono::steady_clock::time_point started_a
 namespace algos {
 
 void GkValidator::ResetState() {
+    if (!OptionIsSet(config::names::kGkUsePairingFilter)) use_pairing_filter_ = false;
+    if (!OptionIsSet(config::names::kGkUseSubgraphReduction)) use_subgraph_reduction_ = false;
     LOG_TRACE("Resetting GK validation result");
     result_.holds = true;
     result_.violations.clear();
@@ -38,6 +41,7 @@ void GkValidator::ResetState() {
     timing_stats_.root_pair_count = 0;
     timing_stats_.checked_pair_count = 0;
     timing_stats_.violation_count = 0;
+    timing_stats_.evaluation = {};
 }
 
 void GkValidator::RegisterOptions() {
@@ -49,10 +53,13 @@ void GkValidator::RegisterOptions() {
     RegisterOption(config::Option{&graph_path_, kGkGraphPath, kDGkGraphPath}.SetIsRequiredFunc(
             [this] { return !OptionIsSet(kGkGraphData); }));
     RegisterOption(config::Option{&key_, kGkKeyData, kDGkKeyData});
-    RegisterOption(
-            config::Option{&use_pairing_filter_, kGkUsePairingFilter, kDGkUsePairingFilter, false});
-    RegisterOption(config::Option{&use_subgraph_reduction_, kGkUseSubgraphReduction,
-                                  kDGkUseSubgraphReduction, false});
+    RegisterOption(config::kGkUseLocalizationOpt(&use_localization_)
+                           .SetConditionalOpts({{[](bool enabled) { return enabled; },
+                                                 {kGkUsePairingFilter}}}));
+    RegisterOption(config::kGkUsePairingFilterOpt(&use_pairing_filter_)
+                           .SetConditionalOpts({{[](bool enabled) { return enabled; },
+                                                 {kGkUseSubgraphReduction}}}));
+    RegisterOption(config::kGkUseSubgraphReductionOpt(&use_subgraph_reduction_));
 }
 
 GkValidator::GkValidator() : Algorithm() {
@@ -62,13 +69,15 @@ GkValidator::GkValidator() : Algorithm() {
 }
 
 void GkValidator::MakeExecuteOptsAvailable() {
-    MakeOptionsAvailable(
-            {config::names::kGkUsePairingFilter, config::names::kGkUseSubgraphReduction});
+    MakeOptionsAvailable({config::names::kGkUseLocalization});
 }
 
 void GkValidator::LoadDataInternal() {
+    UnsetOption(config::names::kGkUseLocalization);
     auto const load_started_at = std::chrono::steady_clock::now();
     timing_stats_ = {};
+    compiled_key_.reset();
+    result_ = {false, {}};
     bool const has_graph = OptionIsSet(config::names::kGkGraphData);
     bool const has_graph_path = OptionIsSet(config::names::kGkGraphPath);
 
@@ -93,7 +102,7 @@ void GkValidator::LoadDataInternal() {
     timing_stats_.load_graph_check_ns = ElapsedNanoseconds(graph_check_started_at);
 
     auto const key_check_started_at = std::chrono::steady_clock::now();
-    gk::CheckKey(key_);
+    compiled_key_ = gk::CompileKey(key_);
     timing_stats_.load_key_check_ns = ElapsedNanoseconds(key_check_started_at);
     timing_stats_.graph_triple_count = graph_.size();
     timing_stats_.load_total_ns = ElapsedNanoseconds(load_started_at);
@@ -107,81 +116,102 @@ void GkValidator::LoadDataInternal() {
 }
 
 void GkValidator::ExecuteInternal() {
-    auto const execute_started_at = std::chrono::steady_clock::now();
-    LOG_INFO(
-            "Starting GK validation: graph triples={}, key triples={}, pairing_filter={}, "
-            "subgraph_reduction={}",
-            graph_.size(), key_.Q.size(), use_pairing_filter_, use_subgraph_reduction_);
-
-    if (use_pairing_filter_ || use_subgraph_reduction_) {
-        LOG_ERROR(
-                "GK execution requested with unsupported options: pairing_filter={}, "
+    try {
+        if (!compiled_key_)
+            throw std::logic_error("GK validation data has not been loaded successfully");
+        config::CheckGkOptimizationDependencies(use_localization_, use_pairing_filter_,
+                                                use_subgraph_reduction_);
+        auto const execute_started_at = std::chrono::steady_clock::now();
+        LOG_INFO(
+                "Starting GK validation: graph triples={}, key triples={}, localization={}, "
+                "pairing_filter={}, "
                 "subgraph_reduction={}",
-                use_pairing_filter_, use_subgraph_reduction_);
-        throw std::logic_error(
-                "GK pairing filtering and subgraph reduction are not implemented in the "
-                "baseline validator");
-    }
+                graph_.size(), key_.Q.size(), use_localization_, use_pairing_filter_,
+                use_subgraph_reduction_);
 
-    auto const prepare_started_at = std::chrono::steady_clock::now();
-    std::vector<gk::model::Node> const entities = gk::CollectEntities(graph_);
-    timing_stats_.graph_entity_count = entities.size();
-    std::string const& root_type = key_.T_Q.at(key_.root_x);
-    std::vector<gk::model::Node const*> root_candidates;
-    root_candidates.reserve(entities.size());
-    for (gk::model::Node const& entity : entities) {
-        if (entity.type == root_type) root_candidates.push_back(&entity);
-    }
-    timing_stats_.root_candidate_count = root_candidates.size();
+        auto const prepare_started_at = std::chrono::steady_clock::now();
+        std::vector<gk::model::Node> const entities = gk::CollectEntities(graph_);
+        timing_stats_.graph_entity_count = entities.size();
+        std::string const& root_type = key_.T_Q.at(key_.root_x);
+        std::vector<gk::model::Node const*> root_candidates;
+        root_candidates.reserve(entities.size());
+        for (gk::model::Node const& entity : entities) {
+            if (entity.type == root_type) root_candidates.push_back(&entity);
+        }
+        timing_stats_.root_candidate_count = root_candidates.size();
 
-    std::vector<gk::model::EntityId> entity_ids;
-    entity_ids.reserve(entities.size());
-    for (gk::model::Node const& entity : entities) entity_ids.push_back(entity.id_or_val);
+        std::vector<gk::model::EntityId> entity_ids;
+        entity_ids.reserve(entities.size());
+        for (gk::model::Node const& entity : entities) entity_ids.push_back(entity.id_or_val);
 
-    gk::EquivalenceRelation const eq0(entity_ids);
-    gk::EvalGK eval(key_);
-    std::size_t const root_pair_count =
-            root_candidates.size() < 2 ? 0
-                                       : root_candidates.size() * (root_candidates.size() - 1) / 2;
-    timing_stats_.root_pair_count = root_pair_count;
-    timing_stats_.execute_prepare_ns = ElapsedNanoseconds(prepare_started_at);
-    LOG_DEBUG(
-            "Prepared GK baseline: {} graph entities, {} root candidates, {} root pairs, "
-            "{} Eq0 classes",
-            entities.size(), root_candidates.size(), root_pair_count, eq0.GetClassCount());
+        gk::EquivalenceRelation const eq0(entity_ids);
+        gk::EvalGK eval(*compiled_key_);
+        std::optional<gk::Neighborhoods> neighborhoods;
+        if (use_localization_ && root_candidates.size() > 1)
+            neighborhoods.emplace(gk::PrepareNeighborhoods(graph_, root_candidates, key_,
+                                                           timing_stats_.evaluation));
+        std::optional<gk::PairingFilter> filter;
+        if (use_pairing_filter_) filter.emplace(key_);
+        std::size_t const root_pair_count =
+                root_candidates.size() < 2
+                        ? 0
+                        : root_candidates.size() * (root_candidates.size() - 1) / 2;
+        timing_stats_.root_pair_count = root_pair_count;
+        timing_stats_.execute_prepare_ns = ElapsedNanoseconds(prepare_started_at);
+        LOG_DEBUG(
+                "Prepared GK validation: {} graph entities, {} root candidates, {} root pairs, "
+                "{} Eq0 classes",
+                entities.size(), root_candidates.size(), root_pair_count, eq0.GetClassCount());
 
-    auto const eval_started_at = std::chrono::steady_clock::now();
-    std::size_t checked_pairs = 0;
-    for (std::size_t first_index = 0; first_index < root_candidates.size(); ++first_index) {
-        gk::model::Node const& first = *root_candidates[first_index];
-        for (std::size_t second_index = first_index + 1; second_index < root_candidates.size();
-             ++second_index) {
-            gk::model::Node const& second = *root_candidates[second_index];
-            ++checked_pairs;
-            LOG_TRACE("Evaluating GK root pair ({}, {})", first.id_or_val, second.id_or_val);
-            gk::EvalGKInput const input{graph_, graph_, first, second};
-            bool const is_violation = eval.Evaluate(input, eq0);
-            LOG_TRACE("GK root pair ({}, {}) result: {}", first.id_or_val, second.id_or_val,
-                      is_violation ? "violation" : "no violation");
-            if (is_violation) {
-                result_.violations.emplace_back(first.id_or_val, second.id_or_val);
+        auto const eval_started_at = std::chrono::steady_clock::now();
+        std::size_t checked_pairs = 0;
+        for (std::size_t first_index = 0; first_index < root_candidates.size(); ++first_index) {
+            gk::model::Node const& first = *root_candidates[first_index];
+            for (std::size_t second_index = first_index + 1; second_index < root_candidates.size();
+                 ++second_index) {
+                gk::model::Node const& second = *root_candidates[second_index];
+                ++checked_pairs;
+                LOG_TRACE("Evaluating GK root pair ({}, {})", first.id_or_val, second.id_or_val);
+                auto const& first_graph = neighborhoods ? (*neighborhoods)[first_index] : graph_;
+                auto const& second_graph = neighborhoods ? (*neighborhoods)[second_index] : graph_;
+                gk::EvalGKInput const input{first_graph, second_graph, first, second};
+                bool const is_violation =
+                        gk::EvaluatePair(eval, input, eq0, filter ? &*filter : nullptr,
+                                         use_subgraph_reduction_, &timing_stats_.evaluation);
+                LOG_TRACE("GK root pair ({}, {}) result: {}", first.id_or_val, second.id_or_val,
+                          is_violation ? "violation" : "no violation");
+                if (is_violation) {
+                    result_.violations.emplace_back(first.id_or_val, second.id_or_val);
+                }
             }
         }
-    }
-    timing_stats_.checked_pair_count = checked_pairs;
-    timing_stats_.execute_eval_ns = ElapsedNanoseconds(eval_started_at);
+        timing_stats_.checked_pair_count = checked_pairs;
+        timing_stats_.execute_eval_ns = ElapsedNanoseconds(eval_started_at);
 
-    auto const finalize_started_at = std::chrono::steady_clock::now();
-    result_.holds = result_.violations.empty();
-    timing_stats_.violation_count = result_.violations.size();
-    timing_stats_.execute_finalize_ns = ElapsedNanoseconds(finalize_started_at);
-    timing_stats_.execute_total_ns = ElapsedNanoseconds(execute_started_at);
-    LOG_INFO(
-            "GK validation complete: checked {} root pairs, found {} violations, holds={}, "
-            "prepare={} ns, eval={} ns, finalize={} ns, total={} ns",
-            checked_pairs, result_.violations.size(), result_.holds,
-            timing_stats_.execute_prepare_ns, timing_stats_.execute_eval_ns,
-            timing_stats_.execute_finalize_ns, timing_stats_.execute_total_ns);
+        auto const finalize_started_at = std::chrono::steady_clock::now();
+        result_.holds = result_.violations.empty();
+        timing_stats_.violation_count = result_.violations.size();
+        timing_stats_.execute_finalize_ns = ElapsedNanoseconds(finalize_started_at);
+        timing_stats_.execute_total_ns = ElapsedNanoseconds(execute_started_at);
+        LOG_DEBUG(
+                "GK evaluation: {} pairing checks, {} filtered pairs, {} exact searches; "
+                "neighborhood={} ns, pairing={} ns, reduction={} ns, search={} ns",
+                timing_stats_.evaluation.pairing_check_count,
+                timing_stats_.evaluation.filtered_pair_count,
+                timing_stats_.evaluation.search_call_count,
+                timing_stats_.evaluation.neighborhood_ns, timing_stats_.evaluation.pairing_ns,
+                timing_stats_.evaluation.reduction_ns, timing_stats_.evaluation.search_ns);
+        LOG_INFO(
+                "GK validation complete: checked {} root pairs, found {} violations, holds={}, "
+                "prepare={} ns, eval={} ns, finalize={} ns, total={} ns",
+                checked_pairs, result_.violations.size(), result_.holds,
+                timing_stats_.execute_prepare_ns, timing_stats_.execute_eval_ns,
+                timing_stats_.execute_finalize_ns, timing_stats_.execute_total_ns);
+    } catch (...) {
+        result_ = {false, {}};
+        UnsetOption(config::names::kGkUseLocalization);
+        throw;
+    }
 }
 
 }  // namespace algos

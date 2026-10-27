@@ -1,10 +1,13 @@
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 
 #include <chrono>
 #include <map>
+#include <optional>
 #include <utility>
 
+#include "core/algorithms/gk/optimizations/evaluation.h"
 #include "core/algorithms/gk/validation.h"
+#include "core/config/gk/option.h"
 #include "core/util/logger.h"
 
 namespace gk {
@@ -18,7 +21,7 @@ std::uint64_t ElapsedNanoseconds(std::chrono::steady_clock::time_point started_a
 
 struct RootGroup {
     std::vector<model::Node const*> entities;
-    std::vector<EvalGK const*> evaluators;
+    std::vector<std::size_t> rules;
 };
 
 }  // namespace
@@ -26,13 +29,16 @@ struct RootGroup {
 ChaseEngine::ChaseEngine(std::vector<model::GraphKey> const& keys) {
     rules_.reserve(keys.size());
     for (auto const& key : keys) {
-        CheckKey(key);
-        rules_.push_back({key.T_Q.at(key.root_x), EvalGK(key)});
+        auto compiled = CompileKey(key);
+        rules_.push_back({key.T_Q.at(key.root_x), std::move(compiled)});
     }
     LOG_DEBUG("Prepared ChaseEngine with {} graph keys", rules_.size());
 }
 
-ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
+ChaseResult ChaseEngine::Run(model::Graph const& graph, bool use_localization,
+                             bool use_pairing_filter, bool use_subgraph_reduction) const {
+    config::CheckGkOptimizationDependencies(use_localization, use_pairing_filter,
+                                            use_subgraph_reduction);
     auto const started_at = std::chrono::steady_clock::now();
     ChaseResult result;
     auto& stats = result.statistics;
@@ -41,7 +47,12 @@ ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
 
     EquivalenceRelation eq;
     std::map<model::TypeId, RootGroup> groups;
-    for (auto const& rule : rules_) groups[rule.root_type].evaluators.push_back(&rule.evaluator);
+    std::vector<EvalGK> evaluators;
+    evaluators.reserve(rules_.size());
+    for (std::size_t i = 0; i < rules_.size(); ++i) {
+        evaluators.emplace_back(rules_[i].key);
+        groups[rules_[i].root_type].rules.push_back(i);
+    }
     for (auto const& entity : entities) {
         eq.AddEntity(entity.id_or_val);
         auto const group = groups.find(entity.type);
@@ -50,6 +61,16 @@ ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
     for (auto const& [type, group] : groups) {
         std::size_t const count = group.entities.size();
         if (count > 1) stats.root_pair_count += count * (count - 1) / 2;
+    }
+    std::vector<std::optional<Neighborhoods>> neighborhoods(rules_.size());
+    std::vector<std::optional<PairingFilter>> filters(rules_.size());
+    for (std::size_t i = 0; i < rules_.size(); ++i) {
+        auto const& rule = rules_[i];
+        auto const& roots = groups.at(rule.root_type).entities;
+        if (use_localization && roots.size() > 1)
+            neighborhoods[i].emplace(
+                    PrepareNeighborhoods(graph, roots, rule.key.descriptor, stats.evaluation));
+        if (use_pairing_filter) filters[i].emplace(rule.key.descriptor);
     }
     stats.prepare_ns = ElapsedNanoseconds(started_at);
 
@@ -67,9 +88,16 @@ ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
                         auto const& rhs = *group.entities[second];
                         if (eq.AreEquivalent(lhs.id_or_val, rhs.id_or_val)) continue;
                         ++stats.checked_pair_count;
-                        for (auto const* evaluator : group.evaluators) {
+                        for (auto rule : group.rules) {
                             ++stats.eval_call_count;
-                            if (!evaluator->Evaluate({graph, graph, lhs, rhs}, eq)) continue;
+                            auto const& left =
+                                    neighborhoods[rule] ? (*neighborhoods[rule])[first] : graph;
+                            auto const& right =
+                                    neighborhoods[rule] ? (*neighborhoods[rule])[second] : graph;
+                            if (!EvaluatePair(evaluators[rule], {left, right, lhs, rhs}, eq,
+                                              filters[rule] ? &*filters[rule] : nullptr,
+                                              use_subgraph_reduction, &stats.evaluation))
+                                continue;
                             if (eq.Merge(lhs.id_or_val, rhs.id_or_val)) {
                                 ++stats.merge_count;
                                 changed = true;

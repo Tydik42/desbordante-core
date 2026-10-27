@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "core/algorithms/algorithm.h"
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 
 namespace gk {
 
@@ -55,6 +55,7 @@ private:
     std::optional<gk::ChaseEngine> engine_;
     gk::ChaseResult result_;
     gk::DeduplicationTimingStats timing_stats_;
+    bool use_localization_ = false;
     bool use_pairing_filter_ = false;
     bool use_subgraph_reduction_ = false;
 
