@@ -1,4 +1,4 @@
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 
 #include <chrono>
 #include <map>
@@ -27,12 +27,12 @@ ChaseEngine::ChaseEngine(std::vector<model::GraphKey> const& keys) {
     rules_.reserve(keys.size());
     for (auto const& key : keys) {
         CheckKey(key);
-        rules_.push_back({key.T_Q.at(key.root_x), EvalGK(key)});
+        rules_.push_back({key.T_Q.at(key.root_x), key});
     }
     LOG_DEBUG("Prepared ChaseEngine with {} graph keys", rules_.size());
 }
 
-ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
+ChaseResult ChaseEngine::Run(model::Graph const& graph, EvaluationOptions options) const {
     auto const started_at = std::chrono::steady_clock::now();
     ChaseResult result;
     auto& stats = result.statistics;
@@ -41,7 +41,12 @@ ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
 
     EquivalenceRelation eq;
     std::map<model::TypeId, RootGroup> groups;
-    for (auto const& rule : rules_) groups[rule.root_type].evaluators.push_back(&rule.evaluator);
+    std::vector<EvalGK> evaluators;
+    evaluators.reserve(rules_.size());
+    for (auto const& rule : rules_) {
+        evaluators.emplace_back(rule.key, options);
+        groups[rule.root_type].evaluators.push_back(&evaluators.back());
+    }
     for (auto const& entity : entities) {
         eq.AddEntity(entity.id_or_val);
         auto const group = groups.find(entity.type);
@@ -69,7 +74,9 @@ ChaseResult ChaseEngine::Run(model::Graph const& graph) const {
                         ++stats.checked_pair_count;
                         for (auto const* evaluator : group.evaluators) {
                             ++stats.eval_call_count;
-                            if (!evaluator->Evaluate({graph, graph, lhs, rhs}, eq)) continue;
+                            if (!evaluator->Evaluate({graph, graph, lhs, rhs}, eq,
+                                                     &stats.evaluation))
+                                continue;
                             if (eq.Merge(lhs.id_or_val, rhs.id_or_val)) {
                                 ++stats.merge_count;
                                 changed = true;

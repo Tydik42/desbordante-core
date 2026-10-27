@@ -13,8 +13,11 @@
 
 namespace gk {
 
-EvalGK::EvalGK(model::GraphKey key)
-    : key_(std::move(key)), traversal_order_(BuildTraversalOrder(key_)) {
+EvalGK::EvalGK(model::GraphKey key, EvaluationOptions options)
+    : key_(std::move(key)),
+      traversal_order_(BuildTraversalOrder(key_)),
+      reduce_subgraphs_(options.use_subgraph_reduction) {
+    if (options.use_pairing_filter || options.use_subgraph_reduction) pairing_filter_.emplace(key_);
     LOG_DEBUG("Initialized EvalGK: {} pattern triples, {} traversal steps", key_.Q.size(),
               traversal_order_.size());
     for (std::size_t step = 0; step < traversal_order_.size(); ++step) {
@@ -73,7 +76,8 @@ TraversalOrder EvalGK::BuildTraversalOrder(model::GraphKey const& key) {
     return order;
 }
 
-bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) const {
+bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq,
+                      EvaluationStatistics* statistics) const {
     auto const evaluate_started_at = std::chrono::steady_clock::now();
     auto const root_type = key_.T_Q.find(key_.root_x);
     if (root_type == key_.T_Q.end() || input.first_root.kind != model::NodeKind::kEntity ||
@@ -86,10 +90,32 @@ bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) c
 
     LOG_TRACE("EvalGK started for roots ('{}', '{}'), Eq classes={}", input.first_root.id_or_val,
               input.second_root.id_or_val, eq.GetClassCount());
+    EvaluationStatistics local_statistics;
+    auto& stats = statistics ? *statistics : local_statistics;
+    std::optional<PairingResult> prepared;
+    auto const* first_graph = &input.first_graph;
+    auto const* second_graph = &input.second_graph;
+    if (pairing_filter_) {
+        prepared = pairing_filter_->Prepare(input.first_graph, input.second_graph, input.first_root,
+                                            input.second_root, reduce_subgraphs_, stats);
+        if (!prepared->pairable) return false;
+        if (reduce_subgraphs_) {
+            first_graph = &prepared->first_graph;
+            second_graph = &prepared->second_graph;
+        }
+    }
+    EvalGKInput const search_input{*first_graph, *second_graph, input.first_root,
+                                   input.second_root};
+    auto const search_started_at = std::chrono::steady_clock::now();
+    ++stats.search_call_count;
     JointMapping m;
     m.Bind(input.first_root, input.second_root, key_.root_x);
 
-    bool const result = SearchStep(0, input, m, eq);
+    bool const result = SearchStep(0, search_input, m, eq);
+    stats.search_ns +=
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - search_started_at)
+                                               .count());
     auto const evaluate_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - evaluate_started_at);
     LOG_TRACE("EvalGK finished for roots ('{}', '{}'): result={}, elapsed={} us",

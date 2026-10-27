@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "core/algorithms/algorithm.h"
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 
 namespace gk {
 

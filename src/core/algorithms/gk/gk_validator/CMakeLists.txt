@@ -1,7 +1,7 @@
 set(NAME gk.eval)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE eval_gk.cpp)
-target_link_libraries(${NAME} PRIVATE spdlog::spdlog_header_only)
+target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk::pairing spdlog::spdlog_header_only)
 
 set(NAME gk.validator)
 desbordante_add_lib(NAME)

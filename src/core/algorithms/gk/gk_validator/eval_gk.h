@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "core/algorithms/gk/equivalence_relation.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 #include "core/algorithms/gk/joint_mapping.h"
+#include "core/algorithms/gk/optimizations/pairing_filter.h"
 
 namespace gk {
 
@@ -25,13 +27,14 @@ struct EvalGKInput {
 
 class EvalGK {
 public:
-    explicit EvalGK(model::GraphKey key);
+    explicit EvalGK(model::GraphKey key, EvaluationOptions options = {});
 
     // Evaluate one pair of root entities. Roots must be entities of T_Q[root_x]. The
     // implementation creates a fresh JointMapping for this call. Equivalence is supplied per
     // call, so one EvalGK object can be reused with different relations and from independent
     // parallel tasks.
-    bool Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) const;
+    bool Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq,
+                  EvaluationStatistics* statistics = nullptr) const;
 
     TraversalOrder const& GetTraversalOrder() const noexcept {
         return traversal_order_;
@@ -42,6 +45,8 @@ private:
 
     model::GraphKey key_;
     TraversalOrder traversal_order_;
+    std::optional<PairingFilter> pairing_filter_;
+    bool reduce_subgraphs_ = false;
 
     bool SearchStep(std::size_t step, EvalGKInput const& input, JointMapping& m,
                     EquivalenceRelation const& eq) const;

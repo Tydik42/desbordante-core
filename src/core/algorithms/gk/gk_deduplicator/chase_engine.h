@@ -22,6 +22,7 @@ struct ChaseStatistics {
     std::size_t eval_call_count = 0;
     std::size_t merge_count = 0;
     std::size_t pass_count = 0;  // Includes the final pass without merges, if any.
+    EvaluationStatistics evaluation;
 };
 
 struct ChaseResult {
@@ -31,17 +32,17 @@ struct ChaseResult {
 
 class ChaseEngine {
 public:
-    // Validate and own prepared keys. No reference to the caller's key container is retained.
+    // Validate and own keys. No reference to the caller's key container is retained.
     explicit ChaseEngine(std::vector<model::GraphKey> const& keys);
 
     // The graph must have passed CheckGraph. Every call starts from Eq_0 and leaves the
     // original graph intact; this object can be reused for independent executions.
-    ChaseResult Run(model::Graph const& graph) const;
+    ChaseResult Run(model::Graph const& graph, EvaluationOptions options = {}) const;
 
 private:
     struct Rule {
         model::TypeId root_type;
-        EvalGK evaluator;
+        model::GraphKey key;
     };
 
     std::vector<Rule> rules_;

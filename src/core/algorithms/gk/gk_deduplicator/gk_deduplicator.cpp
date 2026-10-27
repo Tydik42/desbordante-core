@@ -84,17 +84,11 @@ void GkDeduplicator::ResetState() {
 void GkDeduplicator::ExecuteInternal() {
     auto const started_at = std::chrono::steady_clock::now();
     if (!engine_) throw std::logic_error("GK deduplication data has not been loaded successfully");
-    if (use_pairing_filter_ || use_subgraph_reduction_) {
-        // Algorithm clears execution options only after success. Leave unsupported flags
-        // configurable so a subsequent Python execute() can retry with supported defaults.
-        UnsetOption(config::names::kGkUsePairingFilter);
-        UnsetOption(config::names::kGkUseSubgraphReduction);
-        throw std::logic_error(
-                "GK pairing filtering and subgraph reduction are not implemented "
-                "in the sequential deduplicator");
-    }
-    LOG_INFO("Starting GK deduplication: {} graph triples, {} keys", graph_.size(), keys_.size());
-    result_ = engine_->Run(graph_);
+    LOG_INFO(
+            "Starting GK deduplication: {} graph triples, {} keys, pairing_filter={}, "
+            "subgraph_reduction={}",
+            graph_.size(), keys_.size(), use_pairing_filter_, use_subgraph_reduction_);
+    result_ = engine_->Run(graph_, {use_pairing_filter_, use_subgraph_reduction_});
     timing_stats_.execution = result_.statistics;
     timing_stats_.execute_total_ns = ElapsedNanoseconds(started_at);
     LOG_INFO("GK deduplication complete: {} classes, {} merges, {} passes, elapsed={} ns",

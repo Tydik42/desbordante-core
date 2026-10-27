@@ -139,7 +139,7 @@ constexpr auto kDGkKeysData = "Graph keys used for entity deduplication";
 constexpr auto kDGkUsePairingFilter =
         "Use the P^Q pairing relation to discard root pairs before EvalGK";
 constexpr auto kDGkUseSubgraphReduction =
-        "Reduce pair neighborhoods using P^Q before running EvalGK";
+        "Reduce pair neighborhoods before EvalGK; also computes P^Q when pairing filter is off";
 // GFD miner
 constexpr auto kDDoCollectViolations = "Flag which tells whether to collect violations or not";
 constexpr auto kDGfdK = "Max size of mined gfds";

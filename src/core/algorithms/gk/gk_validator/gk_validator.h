@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/algorithms/algorithm.h"
+#include "core/algorithms/gk/evaluation_options.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 
 namespace gk {
@@ -36,6 +37,7 @@ struct ValidationTimingStats {
     std::size_t root_pair_count = 0;
     std::size_t checked_pair_count = 0;
     std::size_t violation_count = 0;
+    EvaluationStatistics evaluation;
 };
 
 }  // namespace gk

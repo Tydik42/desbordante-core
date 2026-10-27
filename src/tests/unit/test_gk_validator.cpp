@@ -17,7 +17,6 @@
 #include <boost/any.hpp>
 #include <gtest/gtest.h>
 
-#include "core/algorithms/algo_factory.h"
 #include "core/algorithms/gk/equivalence_relation.h"
 #include "core/algorithms/gk/gk_validator/eval_gk.h"
 #include "core/algorithms/gk/gk_validator/gk_validator.h"
@@ -90,7 +89,17 @@ gk::EquivalenceRelation Identity(std::initializer_list<std::string> entities) {
 bool Evaluate(GraphKey const& key, gk::EquivalenceRelation const& eq, Graph const& first_graph,
               Graph const& second_graph, Node const& first_root, Node const& second_root) {
     gk::EvalGK eval(key);
-    return eval.Evaluate({first_graph, second_graph, first_root, second_root}, eq);
+    bool const baseline = eval.Evaluate({first_graph, second_graph, first_root, second_root}, eq);
+    // Keep the malformed-key test's original contract; optimized evaluators require a valid key.
+    if (!key.T_Q.contains(key.root_x)) return baseline;
+    for (auto const options : {gk::EvaluationOptions{true, false}, {false, true}, {true, true}}) {
+        SCOPED_TRACE(options.use_pairing_filter);
+        SCOPED_TRACE(options.use_subgraph_reduction);
+        EXPECT_EQ(gk::EvalGK(key, options)
+                          .Evaluate({first_graph, second_graph, first_root, second_root}, eq),
+                  baseline);
+    }
+    return baseline;
 }
 
 std::unique_ptr<algos::GkValidator> CreateValidator(Graph graph, GraphKey key) {
@@ -630,17 +639,87 @@ TEST(GkValidatorTest, GkValidatorReportsPhaseTimingAndWorkCounters) {
     EXPECT_GE(stats.execute_total_ns, stats.execute_finalize_ns);
 }
 
-TEST(GkValidatorTest, GkValidatorRejectsUnimplementedExecutionModes) {
-    for (std::string_view enabled :
-         {config::names::kGkUsePairingFilter, config::names::kGkUseSubgraphReduction}) {
-        SCOPED_TRACE(std::string(enabled));
-        auto validator = CreateValidator(SharedTargetGraph(), OneEdgeWildcardKey());
-        validator->SetOption(config::names::kGkUsePairingFilter,
-                             enabled == config::names::kGkUsePairingFilter);
+TEST(GkValidatorTest, GkValidatorSwitchesOptimizationsAndResetsTheirStatistics) {
+    auto graph = SharedTargetGraph();
+    graph.push_back({Entity("c", "X"), "other", Value("unrelated")});
+    auto validator = CreateValidator(graph, OneEdgeWildcardKey());
+    for (auto const options :
+         {gk::EvaluationOptions{}, {true, false}, {false, true}, {true, true}, {}}) {
+        validator->SetOption(config::names::kGkUsePairingFilter, options.use_pairing_filter);
         validator->SetOption(config::names::kGkUseSubgraphReduction,
-                             enabled == config::names::kGkUseSubgraphReduction);
-        EXPECT_THROW(validator->Execute(), std::logic_error);
+                             options.use_subgraph_reduction);
+        validator->Execute();
+        EXPECT_EQ(validator->GetViolations(), (std::vector<gk::EntityPair>{{"a", "b"}}));
+        auto const& stats = validator->GetTimingStats();
+        EXPECT_EQ(stats.checked_pair_count, 3U);
+        bool const pairing = options.use_pairing_filter || options.use_subgraph_reduction;
+        EXPECT_EQ(stats.evaluation.pairing_check_count, pairing ? 3U : 0U);
+        EXPECT_EQ(stats.evaluation.filtered_pair_count, pairing ? 2U : 0U);
+        EXPECT_EQ(stats.evaluation.search_call_count, pairing ? 1U : 3U);
+        EXPECT_EQ(stats.evaluation.reduced_triple_count, options.use_subgraph_reduction ? 2U : 0U);
     }
+}
+
+TEST(GkValidatorTest, GkValidatorPairingIsOnlyANecessaryCondition) {
+    auto const x = EntityVariable("x");
+    auto const y = EntityVariable("y");
+    auto const z = EntityVariable("z");
+    auto const key = MakeKey({{x, "p", y}, {x, "q", z}}, {{x, "X"}, {y, "Y"}, {z, "Y"}}, x);
+    auto graph = SharedTargetGraph();
+    graph.push_back({Entity("a", "X"), "q", Entity("shared", "Y")});
+    graph.push_back({Entity("b", "X"), "q", Entity("shared", "Y")});
+    gk::EvaluationStatistics stats;
+    auto const first = Entity("a", "X");
+    auto const second = Entity("b", "X");
+    EXPECT_TRUE(gk::PairingFilter(key).Prepare(graph, graph, first, second, true, stats).pairable);
+    // P^Q admits y and z sharing an image; exact search must reject non-injective embeddings.
+    EXPECT_FALSE(Evaluate(key, Identity({"a", "b", "shared"}), graph, graph, first, second));
+}
+
+TEST(GkValidatorTest, GkValidatorReductionKeepsInducedEdgesAndDuplicateFacts) {
+    auto graph = SharedTargetGraph();
+    auto const first = Entity("a", "X");
+    auto const second = Entity("b", "X");
+    graph.push_back({first, "extra", second});
+    graph.push_back({first, "noise", Entity("junk", "Z")});
+    graph.push_back({Entity("shared", "Y"), "note", Value("ignored")});
+    graph.push_back(graph.front());
+    gk::EvaluationStatistics stats;
+    auto const reduced =
+            gk::PairingFilter(OneEdgeEntityKey()).Prepare(graph, graph, first, second, true, stats);
+    ASSERT_TRUE(reduced.pairable);
+    EXPECT_EQ(reduced.first_graph.size(), 4U);
+    EXPECT_EQ(reduced.second_graph.size(), 4U);
+    for (auto const* part : {&reduced.first_graph, &reduced.second_graph}) {
+        EXPECT_EQ(std::count_if(part->begin(), part->end(),
+                                [](auto const& t) { return t.predicate == "extra"; }),
+                  1);
+        EXPECT_EQ(std::count_if(part->begin(), part->end(),
+                                [](auto const& t) { return t.predicate == "p"; }),
+                  3);
+    }
+    EXPECT_EQ(stats.neighborhood_triple_count, 9U);
+    EXPECT_EQ(stats.reduced_triple_count, 8U);
+    EXPECT_TRUE(Evaluate(OneEdgeEntityKey(), Identity({"a", "b", "shared", "junk"}), graph, graph,
+                         first, second));
+}
+
+TEST(GkValidatorTest, GkValidatorPairingPropagatesMissingSupportToTheRoot) {
+    auto const x = EntityVariable("x");
+    auto const y = Wildcard("y");
+    auto const v = ValueVariable("v");
+    auto const key = MakeKey({{x, "p", y}, {y, "code", v}}, {{x, "X"}, {y, "Y"}}, x);
+    Graph const first = {{Entity("a", "X"), "p", Entity("c", "Y")},
+                         {Entity("c", "Y"), "code", Value("one")}};
+    Graph const second = {{Entity("b", "X"), "p", Entity("d", "Y")},
+                          {Entity("d", "Y"), "code", Value("two")}};
+    gk::EvaluationStatistics stats;
+    EXPECT_FALSE(gk::EvalGK(key, {true, true})
+                         .Evaluate({first, second, Entity("a", "X"), Entity("b", "X")},
+                                   Identity({"a", "b", "c", "d"}), &stats));
+    EXPECT_EQ(stats.pairing_check_count, 1U);
+    EXPECT_EQ(stats.filtered_pair_count, 1U);
+    EXPECT_EQ(stats.search_call_count, 0U);
 }
 
 TEST(GkValidatorTest, GkValidatorRejectsMalformedGraphDescriptors) {

@@ -12,7 +12,7 @@
 
 #include <gtest/gtest.h>
 
-#include "core/algorithms/gk/chase/chase_engine.h"
+#include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 #include "core/algorithms/gk/gk_deduplicator/gk_deduplicator.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 #include "core/config/exceptions.h"
@@ -321,9 +321,13 @@ TEST(GkDeduplicatorTest, MatchesIndependentEmbeddingEnumerationOnSmallGraphs) {
             }
         }
         for (auto const& keys : key_sets) {
-            auto const result = gk::ChaseEngine(keys).Run(graph);
-            EXPECT_EQ(result.clusters, ReferenceChase(graph, keys));
-            EXPECT_EQ(result.statistics.merge_count, 3U - result.clusters.size());
+            auto const expected = ReferenceChase(graph, keys);
+            for (auto const options :
+                 {gk::EvaluationOptions{}, {true, false}, {false, true}, {true, true}}) {
+                auto const result = gk::ChaseEngine(keys).Run(graph, options);
+                EXPECT_EQ(result.clusters, expected);
+                EXPECT_EQ(result.statistics.merge_count, 3U - result.clusters.size());
+            }
         }
     }
 }
@@ -423,7 +427,7 @@ TEST(GkDeduplicatorTest, AdapterRejectsMissingAmbiguousAndInvalidInputs) {
     }
 }
 
-TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndRejectsUnsupportedOptimizations) {
+TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndSwitchesOptimizations) {
     using namespace config::names;
     for (Graph const& graph : {Graph{}, DependentGraph()}) {
         algos::GkDeduplicator algorithm;
@@ -441,14 +445,22 @@ TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndRejectsUnsupportedOptimization
     algorithm.SetOption(kGkGraphData, DependentGraph());
     algorithm.SetOption(kGkKeysData, DependentKeys());
     algorithm.LoadData();
-    for (auto const option : {kGkUsePairingFilter, kGkUseSubgraphReduction}) {
-        algorithm.SetOption(kGkUsePairingFilter, false);
-        algorithm.SetOption(kGkUseSubgraphReduction, false);
-        algorithm.SetOption(option, true);
-        EXPECT_THROW(algorithm.Execute(), std::logic_error);
-        EXPECT_TRUE(algorithm.GetClusters().empty());
-        EXPECT_EQ(algorithm.GetMergeCount(), 0U);
-        EXPECT_EQ(algorithm.GetTimingStats().execute_total_ns, 0U);
+    for (auto const options :
+         {gk::EvaluationOptions{}, {true, false}, {false, true}, {true, true}, {}}) {
+        algorithm.SetOption(kGkUsePairingFilter, options.use_pairing_filter);
+        algorithm.SetOption(kGkUseSubgraphReduction, options.use_subgraph_reduction);
+        algorithm.Execute();
+        EXPECT_EQ(algorithm.GetClusters(), ReferenceChase(DependentGraph(), DependentKeys()));
+        EXPECT_EQ(algorithm.GetMergeCount(), 2U);
+        auto const& stats = algorithm.GetTimingStats().execution;
+        if (options.use_pairing_filter || options.use_subgraph_reduction) {
+            EXPECT_EQ(stats.evaluation.pairing_check_count, stats.eval_call_count);
+            // a/b must not be permanently filtered before c1/c2 become equivalent.
+            EXPECT_EQ(stats.evaluation.filtered_pair_count, 0U);
+            EXPECT_GT(stats.evaluation.search_call_count, 0U);
+        } else {
+            EXPECT_EQ(stats.evaluation.pairing_check_count, 0U);
+        }
     }
     algorithm.SetOption(kGkUsePairingFilter, false);
     algorithm.SetOption(kGkUseSubgraphReduction, false);

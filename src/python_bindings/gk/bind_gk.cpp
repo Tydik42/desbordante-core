@@ -306,6 +306,18 @@ void BindGk(pybind11::module_& main_module) {
                  })
             .def(py::pickle(&SerializeGraphKey, &DeserializeGraphKey));
 
+    py::class_<gk::EvaluationStatistics>(gk_module, "EvaluationStatistics")
+            .def_readonly("neighborhood_ns", &gk::EvaluationStatistics::neighborhood_ns)
+            .def_readonly("pairing_ns", &gk::EvaluationStatistics::pairing_ns)
+            .def_readonly("reduction_ns", &gk::EvaluationStatistics::reduction_ns)
+            .def_readonly("search_ns", &gk::EvaluationStatistics::search_ns)
+            .def_readonly("pairing_check_count", &gk::EvaluationStatistics::pairing_check_count)
+            .def_readonly("filtered_pair_count", &gk::EvaluationStatistics::filtered_pair_count)
+            .def_readonly("search_call_count", &gk::EvaluationStatistics::search_call_count)
+            .def_readonly("neighborhood_triple_count",
+                          &gk::EvaluationStatistics::neighborhood_triple_count)
+            .def_readonly("reduced_triple_count", &gk::EvaluationStatistics::reduced_triple_count);
+
     py::class_<gk::ValidationTimingStats>(gk_module, "ValidationTimingStats")
             .def_readonly("load_source_ns", &gk::ValidationTimingStats::load_source_ns)
             .def_readonly("load_graph_check_ns", &gk::ValidationTimingStats::load_graph_check_ns)
@@ -320,7 +332,8 @@ void BindGk(pybind11::module_& main_module) {
             .def_readonly("root_candidate_count", &gk::ValidationTimingStats::root_candidate_count)
             .def_readonly("root_pair_count", &gk::ValidationTimingStats::root_pair_count)
             .def_readonly("checked_pair_count", &gk::ValidationTimingStats::checked_pair_count)
-            .def_readonly("violation_count", &gk::ValidationTimingStats::violation_count);
+            .def_readonly("violation_count", &gk::ValidationTimingStats::violation_count)
+            .def_readonly("evaluation", &gk::ValidationTimingStats::evaluation);
 
     BindPrimitiveNoBase<algos::GkValidator>(gk_module, "GkValidator")
             .def_property_readonly("holds", &algos::GkValidator::Holds)
@@ -332,8 +345,8 @@ void BindGk(pybind11::module_& main_module) {
 
     auto dedup_module = main_module.def_submodule("gk_deduplication");
     // Both algorithms accept the exact same descriptors, not separately registered copies.
-    for (auto const* name :
-         {"NodeKind", "VarKind", "Node", "Variable", "Triple", "PatternTriple", "GraphKey"}) {
+    for (auto const* name : {"NodeKind", "VarKind", "Node", "Variable", "Triple", "PatternTriple",
+                             "GraphKey", "EvaluationStatistics"}) {
         dedup_module.attr(name) = gk_module.attr(name);
     }
     py::class_<gk::ChaseStatistics>(dedup_module, "ChaseStatistics")
@@ -346,7 +359,8 @@ void BindGk(pybind11::module_& main_module) {
             .def_readonly("checked_pair_count", &gk::ChaseStatistics::checked_pair_count)
             .def_readonly("eval_call_count", &gk::ChaseStatistics::eval_call_count)
             .def_readonly("merge_count", &gk::ChaseStatistics::merge_count)
-            .def_readonly("pass_count", &gk::ChaseStatistics::pass_count);
+            .def_readonly("pass_count", &gk::ChaseStatistics::pass_count)
+            .def_readonly("evaluation", &gk::ChaseStatistics::evaluation);
     py::class_<gk::DeduplicationTimingStats>(dedup_module, "DeduplicationTimingStats")
             .def_readonly("load_source_ns", &gk::DeduplicationTimingStats::load_source_ns)
             .def_readonly("load_graph_check_ns", &gk::DeduplicationTimingStats::load_graph_check_ns)

@@ -44,11 +44,15 @@ def check_graph_from_file() -> None:
 
     validator = gk.algorithms.GkValidator()
     validator.load_data(gk_graph_path=GRAPH_FILE, gk_key=key)
-    validator.execute()
+    # Both flags default to False. Reduction also computes the pairing relation.
+    validator.execute(use_pairing_filter=True, use_subgraph_reduction=True)
 
     print(f"File graph: holds={validator.holds}, violations={validator.get_violations()}")
     assert not validator.holds
     assert validator.get_violations() == [("a", "b")]
+    stats = validator.timing_stats.evaluation
+    print(f"Pairing checks: {stats.pairing_check_count}, filtered: {stats.filtered_pair_count}")
+    print(f"Exact search time (ms): {stats.search_ns / 1_000_000:.3f}")
 
 
 def check_graph_created_in_memory() -> None:
