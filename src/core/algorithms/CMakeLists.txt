@@ -11,6 +11,7 @@ set(SUBDIRS
     gdd
     gfd
     gk
+    gk_compact
     ind
     md
     metric

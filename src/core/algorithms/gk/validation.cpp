@@ -109,6 +109,16 @@ std::size_t FindVariable(std::vector<Variable> const& variables, Variable const&
 
 }  // namespace
 
+void CheckTriple(model::Triple const& triple, std::size_t index) {
+    std::string const prefix = "graph triple " + std::to_string(index);
+    CheckNode(triple.subject, prefix + " subject");
+    if (triple.subject.kind != NodeKind::kEntity) {
+        ThrowInvalid(prefix + " subject must be an entity");
+    }
+    if (triple.predicate.empty()) ThrowInvalid(prefix + " has an empty predicate");
+    CheckNode(triple.object, prefix + " object");
+}
+
 void CheckGraph(model::Graph const& graph) {
     LOG_DEBUG("Validating GK graph descriptor: {} triples", graph.size());
 
@@ -118,15 +128,8 @@ void CheckGraph(model::Graph const& graph) {
         gk::model::Triple const& triple = graph[index];
         std::string const prefix = "graph triple " + std::to_string(index);
 
-        CheckNode(triple.subject, prefix + " subject");
-        if (triple.subject.kind != NodeKind::kEntity) {
-            ThrowInvalid(prefix + " subject must be an entity");
-        }
+        CheckTriple(triple, index);
         RegisterEntityType(entity_types, triple.subject, prefix + " subject");
-
-        if (triple.predicate.empty()) ThrowInvalid(prefix + " has an empty predicate");
-
-        CheckNode(triple.object, prefix + " object");
         if (triple.object.kind == NodeKind::kEntity) {
             RegisterEntityType(entity_types, triple.object, prefix + " object");
         } else {
