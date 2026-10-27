@@ -455,6 +455,16 @@ desbordante_add_test(
 
 # --- GK ---
 desbordante_add_test(
+    gk_compact.graph
+    SRCS
+    test_gk_compact_graph.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk_compact::graph
+    ${DESBORDANTE_PREFIX}::gk_compact::parser
+    ${DESBORDANTE_PREFIX}::gk::parser
+)
+
+desbordante_add_test(
     gk.validator
     SRCS
     test_gk_validator.cpp
