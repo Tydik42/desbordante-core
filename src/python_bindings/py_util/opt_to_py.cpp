@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <typeinfo>
@@ -16,6 +17,7 @@
 #include "core/algorithms/fd/tane/enums.h"
 #include "core/algorithms/gdd/gdd.h"
 #include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk_compact/model/graph.h"
 #include "core/algorithms/md/hymd/enums.h"
 #include "core/algorithms/metric/enums.h"
 #include "core/algorithms/nar/des/enums.h"
@@ -58,6 +60,7 @@ std::unordered_map<std::type_index, ConvFunction> const kConverters{
         kNormalConvPair<std::vector<std::string>>,
         kNormalConvPair<std::vector<double>>,
         kNormalConvPair<gk::model::Graph>,
+        kNormalConvPair<std::shared_ptr<gk_compact::Graph const>>,
         kNormalConvPair<gk::model::GraphKey>,
         kNormalConvPair<std::vector<gk::model::GraphKey>>,
         kNormalConvPair<config::ThreadNumType>,

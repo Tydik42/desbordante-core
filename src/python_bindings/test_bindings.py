@@ -1,3 +1,4 @@
+import gc
 import pathlib
 import pickle
 import tempfile
@@ -351,6 +352,128 @@ class TestGkBindings(unittest.TestCase):
                 self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
                 algorithm.execute(use_localization=True, use_pairing_filter=True,
                                   use_subgraph_reduction=True)
+
+    def test_gk_compact_graph_ownership_csv_and_validator(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        source.append(gk.Triple(gk.Node(gk.NodeKind.ENTITY, "c", "X"),
+                                "unrelated", gk.Node(gk.NodeKind.VALUE, "other")))
+        graph = gk.CompactGraph.from_triples(iter(source))
+        validator = gk.algorithms.CompactGkValidator()
+        with self.assertRaises(RuntimeError):
+            _ = validator.holds
+        validator.load_data(gk_graph=graph, gk_key=key)
+        self.assertIs(validator.get_opts()["gk_graph"], graph)
+        self.assertEqual(validator._get_option_type("gk_graph"), (gk.CompactGraph,))
+        self.assertEqual(graph.edge_count, len(source))
+        with self.assertRaises(AttributeError):
+            graph.edge_count = 0
+        del graph
+        gc.collect()
+        modes = ({}, {"use_localization": True},
+                 {"use_localization": True, "use_pairing_filter": True},
+                 {"use_subgraph_reduction": True, "use_pairing_filter": True,
+                  "use_localization": True}, {})
+        for options in modes:
+            validator.execute(**options)
+            self.assertFalse(validator.holds)
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+        with self.assertRaises(ValueError):
+            validator.execute(use_localization=False, use_pairing_filter=True)
+        with self.assertRaises(ValueError):
+            validator.execute(use_localization=True, use_pairing_filter=False,
+                              use_subgraph_reduction=True)
+        validator.execute(use_localization=True)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        validator.execute()
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        with self.assertRaises(ValueError):
+            gk.algorithms.CompactGkValidator().load_data(gk_graph=None, gk_key=key)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            header = ("subject_id,subject_type,predicate,object_kind,"
+                      "object_id_or_value,object_type\n")
+            path.write_text(header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n")
+            for options in ({"gk_graph": gk.CompactGraph.from_csv(path)},
+                            {"gk_graph_path": path}):
+                loaded = gk.algorithms.CompactGkValidator()
+                loaded.load_data(gk_key=key, **options)
+                for mode in modes:
+                    loaded.execute(**mode)
+                    self.assertEqual(loaded.get_violations(), [("a", "b")])
+            path.write_text(header)
+            loaded = gk.algorithms.CompactGkValidator()
+            loaded.load_data(gk_graph_path=path, gk_key=key)
+            for mode in modes:
+                loaded.execute(**mode)
+                self.assertTrue(loaded.holds)
+                self.assertEqual(loaded.get_violations(), [])
+            for subject_type, object_type in (("-", "Y"), ("X", "-")):
+                with self.subTest(subject_type=subject_type, object_type=object_type):
+                    path.write_text(header + f"a,{subject_type},p,entity,b,{object_type}\n")
+                    with self.assertRaises(RuntimeError):
+                        gk.CompactGraph.from_csv(path)
+                    invalid = [gk.Triple(gk.Node(gk.NodeKind.ENTITY, "a", subject_type),
+                                         "p", gk.Node(gk.NodeKind.ENTITY, "b", object_type))]
+                    with self.assertRaises(ValueError):
+                        gk.CompactGraph.from_triples(invalid)
+
+    def test_gk_compact_options_follow_dependencies(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        validator = gk.algorithms.CompactGkValidator()
+        validator.load_data(gk_graph=gk.CompactGraph.from_triples(source), gk_key=key)
+        localization = "use_localization"
+        pairing = "use_pairing_filter"
+        reduction = "use_subgraph_reduction"
+        for name in (localization, pairing, reduction):
+            self.assertIn(name, validator.get_possible_options())
+            self.assertEqual(validator._get_option_type(name), (bool,))
+            self.assertTrue(validator.get_description(name))
+        self.assertEqual(validator._get_needed_options(), {localization})
+        with self.assertRaises(ValueError):
+            validator._set_option(pairing, True)
+        validator._set_option(localization, True)
+        self.assertEqual(validator._get_needed_options(), {pairing})
+        validator._set_option(pairing, True)
+        self.assertEqual(validator._get_needed_options(), {reduction})
+        validator._set_option(reduction, True)
+        self.assertEqual(validator._get_needed_options(), set())
+        validator._set_option(localization, False)
+        self.assertEqual(validator._get_needed_options(), set())
+        with self.assertRaises(ValueError):
+            validator._set_option(reduction, True)
+        validator.execute()
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        self.assertEqual(validator._get_needed_options(), {localization})
+        # ConfigureAlgo must activate parents before children, regardless of
+        # keyword insertion order. False inactive options remain harmless.
+        validator.execute(use_subgraph_reduction=True, use_pairing_filter=True,
+                          use_localization=True)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        validator.execute(use_subgraph_reduction=False, use_pairing_filter=False,
+                          use_localization=False)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+
+    def test_gk_implementations_share_option_contract(self):
+        graph, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        plain = gk.algorithms.GkValidator()
+        compact = gk.algorithms.CompactGkValidator()
+        plain.load_data(gk_graph=graph, gk_key=key)
+        compact.load_data(gk_graph=gk.CompactGraph.from_triples(graph), gk_key=key)
+        for name in ("use_localization", "use_pairing_filter", "use_subgraph_reduction"):
+            self.assertEqual(plain.get_description(name), compact.get_description(name))
+            self.assertEqual(plain._get_option_type(name), compact._get_option_type(name))
+        for localization, pairing, reduction in ((False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)):
+            for algorithm in (plain, compact):
+                algorithm.execute(use_subgraph_reduction=reduction, use_pairing_filter=pairing,
+                                  use_localization=localization)
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+            self.assertEqual(plain.get_violations(), compact.get_violations())
 
     def test_gk_optimizations_preserve_results_and_report_filtering(self):
         graph, key = self.make_graph_and_key()
