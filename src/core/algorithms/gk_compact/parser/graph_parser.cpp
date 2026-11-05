@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "core/algorithms/gk/parser/csv_reader.h"
-#include "core/algorithms/gk_compact/graph/graph_builder.h"
+#include "core/algorithms/gk_compact/model/graph_builder.h"
 
 namespace gk_compact::parser {
 
