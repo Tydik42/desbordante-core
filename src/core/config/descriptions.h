@@ -136,13 +136,13 @@ constexpr auto kDGkGraphData = "Graph descriptor used by graph-key algorithms";
 constexpr auto kDGkGraphPath = "Path to a GK graph in the supported CSV format";
 constexpr auto kDGkKeyData = "Graph-key descriptor used by the graph-key validator";
 constexpr auto kDGkKeysData = "Graph keys used for entity deduplication";
+constexpr auto kDGkUseLocalization =
+        "Search within induced root neighborhoods; enables the use_pairing_filter option";
 constexpr auto kDGkUsePairingFilter =
         "Filter root pairs using P^Q; requires use_localization=true and enables "
         "the use_subgraph_reduction option";
 constexpr auto kDGkUseSubgraphReduction =
         "Reduce localized graphs using P^Q; requires use_pairing_filter=true";
-constexpr auto kDGkUseLocalization =
-        "Search within induced root neighborhoods; enables the use_pairing_filter option";
 // GFD miner
 constexpr auto kDDoCollectViolations = "Flag which tells whether to collect violations or not";
 constexpr auto kDGfdK = "Max size of mined gfds";
