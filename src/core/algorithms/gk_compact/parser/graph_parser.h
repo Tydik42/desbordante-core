@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <istream>
 
-#include "core/algorithms/gk_compact/graph/graph.h"
+#include "core/algorithms/gk_compact/model/graph.h"
 
 namespace gk_compact::parser {
 

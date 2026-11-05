@@ -2,7 +2,7 @@
 
 #include <unordered_map>
 
-#include "core/algorithms/gk_compact/graph/graph.h"
+#include "core/algorithms/gk_compact/model/graph.h"
 
 namespace gk_compact {
 
@@ -22,6 +22,9 @@ private:
     };
 
     GraphData data_;
+    VertexData vertices_;
+    std::vector<std::string> types_;
+    std::vector<std::string> predicates_;
     std::vector<Triple> triples_;
     std::unordered_map<std::string, VertexId> entity_ids_;
     std::unordered_map<std::string, VertexId> value_ids_;

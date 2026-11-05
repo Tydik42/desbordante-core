@@ -102,11 +102,11 @@ bool CsvReader::ReadTriple(model::Triple& triple) {
     std::string_view const object_id_or_value = fields[4];
     std::string_view const object_type = fields[5];
 
-    if (subject_id.empty() || subject_type.empty() || predicate.empty() ||
+    if (subject_id.empty() || subject_type.empty() || subject_type == "-" || predicate.empty() ||
         object_id_or_value.empty()) {
         ThrowCsvError(line_number_,
                       "subject, subject type, predicate, and object must be "
-                      "non-empty");
+                      "non-empty; entity type must differ from '-'");
     }
 
     model::Node subject{model::NodeKind::kEntity, std::string(subject_id),

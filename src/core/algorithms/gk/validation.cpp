@@ -35,8 +35,8 @@ void CheckNode(Node const& node, std::string const& location) {
     if (!magic_enum::enum_contains(node.kind)) {
         ThrowInvalid(location + " has an unknown node kind");
     }
-    if (node.kind == NodeKind::kEntity && node.type.empty()) {
-        ThrowInvalid(location + " entity has an empty type");
+    if (node.kind == NodeKind::kEntity && (node.type.empty() || node.type == "-")) {
+        ThrowInvalid(location + " entity type must be nonempty and different from '-'");
     }
     if (node.kind == NodeKind::kValue && !node.type.empty()) {
         ThrowInvalid(location + " value must not have an entity type");
@@ -175,8 +175,8 @@ void CheckKey(model::GraphKey const& key) {
 
     for (auto const& [variable, type] : key.T_Q) {
         CheckVariable(variable, "key type map variable");
-        if (type.empty()) {
-            ThrowInvalid("empty type for pattern variable " + variable.name);
+        if (type.empty() || type == "-") {
+            ThrowInvalid("invalid type for pattern variable " + variable.name);
         }
         if (variable.kind != VarKind::kEntity && variable.kind != VarKind::kWildcard) {
             ThrowInvalid("type is provided for a non-entity pattern variable " + variable.name);

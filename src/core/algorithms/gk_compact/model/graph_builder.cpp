@@ -1,4 +1,4 @@
-#include "core/algorithms/gk_compact/graph/graph_builder.h"
+#include "core/algorithms/gk_compact/model/graph_builder.h"
 
 #include <algorithm>
 #include <numeric>
@@ -51,8 +51,7 @@ std::vector<std::uint32_t> OrderLabels(std::vector<std::string>& labels) {
 void GraphBuilder::CheckEntityType(gk::model::Node const& entity) const {
     if (entity.kind != gk::model::NodeKind::kEntity) return;
     auto const found = entity_ids_.find(entity.id_or_val);
-    if (found != entity_ids_.end() &&
-        data_.types.at(data_.vertices.types.at(found->second)) != entity.type) {
+    if (found != entity_ids_.end() && types_.at(vertices_.types.at(found->second)) != entity.type) {
         throw std::invalid_argument("GK compact graph: entity " + entity.id_or_val +
                                     " has inconsistent types");
     }
@@ -62,11 +61,11 @@ VertexId GraphBuilder::InternNode(gk::model::Node const& node) {
     bool const entity = node.kind == gk::model::NodeKind::kEntity;
     auto& lookup = entity ? entity_ids_ : value_ids_;
     if (auto const found = lookup.find(node.id_or_val); found != lookup.end()) return found->second;
-    auto const vertex = CheckedId(data_.vertices.labels.size());
-    auto const type = entity ? InternLabel(node.type, type_ids_, data_.types) : kNoType;
-    data_.vertices.types.push_back(type);
-    data_.vertices.labels.push_back(node.id_or_val);
-    if (entity) ++data_.vertices.entity_count;
+    auto const vertex = CheckedId(vertices_.labels.size());
+    auto const type = entity ? InternLabel(node.type, type_ids_, types_) : kNoType;
+    vertices_.types.push_back(type);
+    vertices_.labels.push_back(node.id_or_val);
+    if (entity) ++vertices_.entity_count;
     lookup.emplace(node.id_or_val, vertex);
     return vertex;
 }
@@ -82,13 +81,13 @@ void GraphBuilder::AddTriple(gk::model::Triple const& triple) {
     }
     auto const subject = InternNode(triple.subject);
     auto const object = InternNode(triple.object);
-    auto const predicate = InternLabel(triple.predicate, predicate_ids_, data_.predicates);
+    auto const predicate = InternLabel(triple.predicate, predicate_ids_, predicates_);
     triples_.push_back({subject, predicate, object});
     ++data_.input_triple_count;
 }
 
 std::vector<VertexId> GraphBuilder::OrderVertices() {
-    auto& vertices = data_.vertices;
+    auto& vertices = vertices_;
     std::vector<VertexId> order(vertices.labels.size());
     std::iota(order.begin(), order.end(), 0U);
     std::ranges::sort(order, [&](auto lhs, auto rhs) {
@@ -112,7 +111,7 @@ std::vector<VertexId> GraphBuilder::OrderVertices() {
 }
 
 void GraphBuilder::BuildIndex(CsrData& index, bool incoming) {
-    index.offsets.assign(data_.vertices.labels.size() + 1, 0);
+    index.offsets.assign(vertices_.labels.size() + 1, 0);
     auto from = [incoming](Triple const& triple) {
         return incoming ? triple.object : triple.subject;
     };
@@ -126,7 +125,7 @@ void GraphBuilder::BuildIndex(CsrData& index, bool incoming) {
     for (auto const& triple : triples_) {
         index.edges[next[from(triple)]++] = {triple.predicate, to(triple)};
     }
-    for (std::size_t vertex = 0; vertex < data_.vertices.labels.size(); ++vertex) {
+    for (std::size_t vertex = 0; vertex < vertices_.labels.size(); ++vertex) {
         auto edges = std::span<Edge>(index.edges)
                              .subspan(index.offsets[vertex],
                                       index.offsets[vertex + 1] - index.offsets[vertex]);
@@ -136,9 +135,9 @@ void GraphBuilder::BuildIndex(CsrData& index, bool incoming) {
 
 Graph GraphBuilder::Build() && {
     {
-        auto const types = OrderLabels(data_.types);
-        auto const predicates = OrderLabels(data_.predicates);
-        for (auto& type : data_.vertices.types) {
+        auto const types = OrderLabels(types_);
+        auto const predicates = OrderLabels(predicates_);
+        for (auto& type : vertices_.types) {
             if (type != kNoType) type = types[type];
         }
         auto const vertices = OrderVertices();
@@ -157,6 +156,8 @@ Graph GraphBuilder::Build() && {
     triples_.erase(duplicates.begin(), duplicates.end());
     BuildIndex(data_.outgoing, false);
     BuildIndex(data_.incoming, true);
+    data_.metadata = std::make_shared<GraphMetadata const>(std::move(vertices_), std::move(types_),
+                                                           std::move(predicates_));
     Graph result(std::move(data_));
     LOG_DEBUG("Built compact GK graph: {} vertices, {} entities, {} unique edges, {} input triples",
               result.GetVertexCount(), result.GetEntityCount(), result.GetEdgeCount(),
