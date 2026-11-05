@@ -56,6 +56,8 @@ void CompactGkValidator::MakeExecuteOptsAvailable() {
 
 void CompactGkValidator::LoadDataInternal() {
     using gk_compact::TracePhase;
+    UnsetOption(config::names::kGkUseLocalization);
+    data_ready_ = false;
     key_.reset();
     result_.reset();
     bool const has_graph = OptionIsSet(config::names::kGkGraphData);
@@ -71,6 +73,7 @@ void CompactGkValidator::LoadDataInternal() {
     if (!graph_) throw config::ConfigurationError("gk_graph must not be null");
     auto const& graph = *graph_;
     key_ = TracePhase("key_prepare", [&] { return gk_compact::CompileKey(source_key_, graph); });
+    data_ready_ = true;
     LOG_DEBUG("Loaded compact GK validation data: {} vertices, {} edges, key prepared={}",
               graph.GetVertexCount(), graph.GetEdgeCount(), key_.has_value());
 }
@@ -85,6 +88,8 @@ void CompactGkValidator::ResetState() {
 void CompactGkValidator::ExecuteInternal() {
     using gk_compact::TracePhase;
     try {
+        if (!data_ready_)
+            throw std::logic_error("Compact GK validation data has not been loaded successfully");
         config::CheckGkOptimizationDependencies(use_localization_, use_pairing_filter_,
                                                 use_subgraph_reduction_);
         LOG_INFO(

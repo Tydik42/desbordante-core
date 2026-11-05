@@ -456,6 +456,35 @@ class TestGkBindings(unittest.TestCase):
                           use_localization=False)
         self.assertEqual(validator.get_violations(), [("a", "b")])
 
+    def test_gk_compact_rejects_execution_after_failed_reload(self):
+        _, key = self.make_graph_and_key()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            header = ("subject_id,subject_type,predicate,object_kind,"
+                      "object_id_or_value,object_type\n")
+            csv = header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n"
+            path.write_text(csv)
+            validator = desb.gk_verification.algorithms.CompactGkValidator()
+            validator.load_data(gk_graph_path=path, gk_key=key)
+            validator.execute()
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+            path.write_text("invalid CSV\n")
+            with self.assertRaises(RuntimeError):
+                validator.load_data()
+            with self.assertRaises(RuntimeError):
+                validator.execute()
+            with self.assertRaises(RuntimeError):
+                _ = validator.holds
+            path.write_text(header)
+            validator.load_data()
+            validator.execute()
+            self.assertTrue(validator.holds)
+            path.write_text(csv)
+            validator.load_data()
+            validator.execute(use_localization=True, use_pairing_filter=True,
+                              use_subgraph_reduction=True)
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+
     def test_gk_implementations_share_option_contract(self):
         graph, key = self.make_graph_and_key()
         gk = desb.gk_verification

@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -8,6 +10,7 @@
 #include <random>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -594,6 +597,44 @@ TEST(GkCompactValidatorTest, AdapterRejectsNullAndAmbiguousSourcesAndHandlesMiss
     Execute(empty, true);
     EXPECT_TRUE(empty.Holds());
     EXPECT_TRUE(empty.GetViolations().empty());
+}
+
+TEST(GkCompactValidatorTest, AdapterRejectsExecutionAfterFailedReloadAndRecovers) {
+    using namespace config::names;
+    auto const path = std::filesystem::temp_directory_path() / "gk_compact_failed_reload.csv";
+    std::string const header =
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n";
+    std::string const csv = header + "a,X,p,entity,t,Y\nb,X,p,entity,t,Y\n";
+    auto write = [&](std::string const& content) { std::ofstream(path) << content; };
+    write(csv);
+    algos::CompactGkValidator validator;
+    validator.SetOption(kGkGraphPath, path);
+    validator.SetOption(kGkKeyData, EntityKey());
+    validator.LoadData();
+    Execute(validator, true, true, true);
+    EXPECT_EQ(validator.GetViolations(), (std::vector<gk::EntityPair>{{"a", "b"}}));
+
+    write("invalid CSV\n");
+    validator.SetOption(kGkUseLocalization, false);
+    EXPECT_THROW(validator.LoadData(), std::runtime_error);
+    EXPECT_THROW(validator.GetResult(), std::logic_error);
+    EXPECT_THROW(validator.Execute(), std::logic_error);
+    EXPECT_THROW(validator.GetResult(), std::logic_error);
+
+    // A successful load with no embeddings is distinct from a failed load.
+    write(header);
+    validator.SetOption(kGkUseLocalization, false);
+    validator.LoadData();
+    Execute(validator);
+    EXPECT_TRUE(validator.Holds());
+    EXPECT_TRUE(validator.GetViolations().empty());
+
+    write(csv);
+    validator.SetOption(kGkUseLocalization, false);
+    validator.LoadData();
+    Execute(validator, true, true, true);
+    EXPECT_EQ(validator.GetViolations(), (std::vector<gk::EntityPair>{{"a", "b"}}));
+    std::filesystem::remove(path);
 }
 
 TEST(GkCompactValidatorTest, ConfigAcceptsOnlyOptimizationDependencyPrefixes) {
