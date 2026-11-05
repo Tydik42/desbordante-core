@@ -21,6 +21,16 @@ desbordante_add_lib(NAME OBJECT)
 target_sources(${NAME} PRIVATE test_ind_util.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::ind gtest Boost::headers)
 
+# --- Algorithm options ---
+desbordante_add_test(
+    algorithm.options
+    SRCS
+    test_algorithm_options.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::algos
+    Boost::headers
+)
+
 # --- AC ---
 desbordante_add_test(
     ac

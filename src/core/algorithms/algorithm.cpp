@@ -43,8 +43,8 @@ void Algorithm::ExcludeOptions(std::string_view parent_option) noexcept {
     for (auto const& option_name : it->second) {
         auto possible_opt_it = possible_options_.find(option_name);
         assert(possible_opt_it != possible_options_.end());
-        available_options_.erase(possible_opt_it->first);
         UnsetOption(possible_opt_it->first);
+        available_options_.erase(possible_opt_it->first);
     }
     opt_parents_.erase(it);
 }
