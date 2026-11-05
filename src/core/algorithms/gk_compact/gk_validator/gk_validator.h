@@ -32,6 +32,8 @@ private:
     gk::model::GraphKey source_key_;
     std::optional<gk_compact::CompiledKey> key_;
     std::optional<gk::ValidationResult> result_;
+    // An absent compiled key also represents a valid load with no embeddings.
+    bool data_ready_ = false;
     bool use_localization_ = false;
     bool use_pairing_filter_ = false;
     bool use_subgraph_reduction_ = false;
