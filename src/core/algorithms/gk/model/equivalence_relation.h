@@ -23,6 +23,12 @@ public:
 
     explicit EquivalenceRelation(std::vector<model::EntityId> const& entities);
 
+    EquivalenceRelation(EquivalenceRelation const&) = default;
+    EquivalenceRelation& operator=(EquivalenceRelation const& other);
+    // A moved-from relation is the empty identity relation and can be reused.
+    EquivalenceRelation(EquivalenceRelation&& other) noexcept;
+    EquivalenceRelation& operator=(EquivalenceRelation&& other) noexcept;
+
     void AddEntity(model::EntityId const& entity);
 
     void AddEntities(std::vector<model::EntityId> const& entities);
@@ -55,6 +61,8 @@ private:
     std::size_t class_count_ = 0;
     mutable Relation relation_;
     mutable bool relation_valid_ = false;
+
+    void Swap(EquivalenceRelation& other) noexcept;
 
     // Const queries do not compress paths, so independent EvalGK calls can share a frozen Eq.
     std::size_t FindRoot(std::size_t index) const;

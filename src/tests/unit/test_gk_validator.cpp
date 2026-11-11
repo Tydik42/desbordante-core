@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
@@ -198,6 +199,101 @@ TEST(GkValidatorTest, GkValidatorEquivalenceRelationKeepsClosure) {
     EXPECT_EQ(eq.GetClassCount(), 2U);
     EXPECT_EQ(eq.GetClasses(), (gk::EquivalenceRelation::Classes{{"a", "b", "c"}, {"d"}}));
     EXPECT_FALSE(eq.AreEquivalent("unknown", "unknown"));
+}
+
+TEST(GkValidatorTest, GkValidatorEquivalenceCopiesMovesAndReusesBothStorageModes) {
+    static_assert(std::is_nothrow_move_constructible_v<gk::EquivalenceRelation>);
+    static_assert(std::is_nothrow_move_assignable_v<gk::EquivalenceRelation>);
+    auto expect_empty_and_reuse = [](gk::EquivalenceRelation& eq) {
+        EXPECT_EQ(eq.GetEntityCount(), 0U);
+        EXPECT_EQ(eq.GetClassCount(), 0U);
+        EXPECT_TRUE(eq.IsIdentity());
+        EXPECT_TRUE(eq.GetClasses().empty());
+        EXPECT_TRUE(eq.GetRelation().empty());
+        EXPECT_FALSE(eq.AreEquivalent("a", "a"));
+        eq.AddEntity("fresh");
+        EXPECT_EQ(eq.GetEntityCount(), 1U);
+        EXPECT_EQ(eq.GetClassCount(), 1U);
+        EXPECT_TRUE(eq.IsIdentity());
+        EXPECT_TRUE(eq.Merge("fresh", "another"));
+        EXPECT_EQ(eq.GetEntityCount(), 2U);
+        EXPECT_EQ(eq.GetClassCount(), 1U);
+        EXPECT_TRUE(eq.AreEquivalent("fresh", "another"));
+        EXPECT_EQ(eq.GetRelation().size(), 4U);
+    };
+    for (bool materialized : {false, true}) {
+        for (bool cached : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << "materialized=" << materialized << ", cached=" << cached);
+            auto source = Identity({"a", "b", "c", "d"});
+            if (materialized) source.Merge("a", "b");
+            auto const expected = source.GetClasses();
+            gk::EquivalenceRelation::Relation relation;
+            for (auto const& group : expected)
+                for (auto const& first : group)
+                    for (auto const& second : group) relation.emplace(first, second);
+            if (cached) EXPECT_EQ(source.GetRelation(), relation);
+
+            auto copy = source;
+            EXPECT_TRUE(copy.Merge("c", "d"));
+            EXPECT_EQ(source.GetClasses(), expected);
+            copy = source;
+            EXPECT_EQ(copy.GetClasses(), expected);
+            EXPECT_EQ(copy.GetRelation(), relation);
+
+            gk::EquivalenceRelation moved(std::move(source));
+            EXPECT_EQ(moved.GetClasses(), expected);
+            EXPECT_EQ(moved.GetClassCount(), expected.size());
+            EXPECT_EQ(moved.GetEntityCount(), 4U);
+            EXPECT_EQ(moved.IsIdentity(), !materialized);
+            expect_empty_and_reuse(source);
+            if (cached) EXPECT_EQ(moved.GetRelation(), relation);
+
+            auto assigned = Identity({"old", "other"});
+            assigned.Merge("old", "other");
+            assigned.GetRelation();
+            assigned = std::move(moved);
+            EXPECT_EQ(assigned.GetClasses(), expected);
+            EXPECT_EQ(assigned.GetClassCount(), expected.size());
+            EXPECT_EQ(assigned.GetEntityCount(), 4U);
+            EXPECT_EQ(assigned.IsIdentity(), !materialized);
+            EXPECT_EQ(assigned.GetRelation(), relation);
+            EXPECT_FALSE(assigned.AreEquivalent("old", "other"));
+            expect_empty_and_reuse(moved);
+
+            auto* const self = &assigned;
+            assigned = *self;
+            assigned = std::move(*self);
+            EXPECT_EQ(assigned.GetClasses(), expected);
+            EXPECT_EQ(assigned.GetRelation(), relation);
+            EXPECT_EQ(assigned.GetClassCount(), expected.size());
+        }
+    }
+}
+
+TEST(GkValidatorTest, GkValidatorEquivalenceMovesEmptyRelations) {
+    gk::EquivalenceRelation source;
+    EXPECT_TRUE(source.GetRelation().empty());
+    gk::EquivalenceRelation moved(std::move(source));
+    EXPECT_TRUE(source.IsIdentity());
+    EXPECT_EQ(source.GetClassCount(), 0U);
+    EXPECT_TRUE(moved.IsIdentity());
+    EXPECT_TRUE(moved.GetRelation().empty());
+
+    auto assigned = Identity({"old", "other"});
+    assigned.Merge("old", "other");
+    assigned.GetRelation();
+    assigned = std::move(moved);
+    for (auto const* eq : {&source, &moved, &assigned}) {
+        EXPECT_EQ(eq->GetEntityCount(), 0U);
+        EXPECT_EQ(eq->GetClassCount(), 0U);
+        EXPECT_TRUE(eq->IsIdentity());
+        EXPECT_TRUE(eq->GetClasses().empty());
+        EXPECT_TRUE(eq->GetRelation().empty());
+    }
+    assigned.AddEntity("fresh");
+    EXPECT_EQ(assigned.GetClassCount(), 1U);
+    EXPECT_EQ(assigned.GetRelation().size(), 1U);
 }
 
 TEST(GkValidatorTest, GkValidatorJointMappingSupportsLifecycleAndInjectivity) {

@@ -8,6 +8,36 @@ EquivalenceRelation::EquivalenceRelation(std::vector<model::EntityId> const& ent
     AddEntities(entities);
 }
 
+EquivalenceRelation& EquivalenceRelation::operator=(EquivalenceRelation const& other) {
+    if (this != &other) {
+        EquivalenceRelation copy(other);
+        Swap(copy);
+    }
+    return *this;
+}
+
+EquivalenceRelation::EquivalenceRelation(EquivalenceRelation&& other) noexcept {
+    Swap(other);
+}
+
+EquivalenceRelation& EquivalenceRelation::operator=(EquivalenceRelation&& other) noexcept {
+    if (this != &other) {
+        EquivalenceRelation moved(std::move(other));
+        Swap(moved);
+    }
+    return *this;
+}
+
+void EquivalenceRelation::Swap(EquivalenceRelation& other) noexcept {
+    indices_.swap(other.indices_);
+    entities_.swap(other.entities_);
+    parents_.swap(other.parents_);
+    sizes_.swap(other.sizes_);
+    std::swap(class_count_, other.class_count_);
+    relation_.swap(other.relation_);
+    std::swap(relation_valid_, other.relation_valid_);
+}
+
 void EquivalenceRelation::AddEntity(model::EntityId const& entity) {
     bool const materialized = !IsIdentity();
     std::size_t const index = entities_.size();
