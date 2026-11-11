@@ -264,6 +264,115 @@ class TestGkBindings(unittest.TestCase):
         ]
         return graph, key
 
+    @classmethod
+    def load_cases(cls):
+        graph, key = cls.make_graph_and_key()
+        other_key = desb.gk_verification.GraphKey(
+            [desb.gk_verification.PatternTriple(key.root, "absent", key.pattern[0].object)],
+            key.types, key.root,
+        )
+        verification = desb.gk_verification
+        deduplication = desb.gk_deduplication
+        cases = [
+            (verification.algorithms.GkValidator,
+             {"gk_graph": graph, "gk_key": key},
+             {"gk_graph": []}, {"gk_key": other_key}),
+            (deduplication.algorithms.GkDeduplicator,
+             {"gk_graph": graph, "gk_keys": [key]},
+             {"gk_graph": []}, {"gk_keys": []}),
+        ]
+        return cases
+
+    @staticmethod
+    def load_result(algorithm):
+        if hasattr(algorithm, "get_violations"):
+            return algorithm.holds, algorithm.get_violations()
+        return algorithm.get_clusters()
+
+    def test_gk_load_rejects_replacing_configured_input(self):
+        for constructor, arguments, graph_change, key_change in self.load_cases():
+            reference = constructor()
+            reference.load_data(**arguments)
+            reference.execute()
+            expected = self.load_result(reference)
+            for executed in (False, True):
+                with self.subTest(algorithm=constructor.__name__, executed=executed):
+                    algorithm = constructor()
+                    algorithm.load_data(**arguments)
+                    if executed:
+                        algorithm.execute()
+                    for replacement in (graph_change, key_change,
+                                        {"gk_graph_path": "unused.csv"},
+                                        {**graph_change, **key_change}):
+                        with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                            algorithm.load_data(**replacement)
+                    algorithm.execute()
+                    self.assertEqual(self.load_result(algorithm), expected)
+                    algorithm.load_data()
+                    self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                    algorithm.execute()
+                    self.assertEqual(self.load_result(algorithm), expected)
+
+            for replacement in (graph_change, key_change):
+                fresh = constructor()
+                fresh.load_data(**{**arguments, **replacement})
+                fresh.execute()
+                self.assertNotEqual(self.load_result(fresh), expected)
+
+    def test_gk_load_rejects_unknown_and_execution_arguments(self):
+        for constructor, arguments, _, _ in self.load_cases():
+            with self.subTest(algorithm=constructor.__name__):
+                algorithm = constructor()
+                initial_needed = algorithm._get_needed_options()
+                wrong_key = "gk_keys" if "gk_key" in arguments else "gk_key"
+                for invalid in ({"gk_grap": []}, {"use_localization": True}, {wrong_key: None}):
+                    with self.assertRaisesRegex(ValueError, "Unknown GK load_data option"):
+                        algorithm.load_data(**{**arguments, **invalid})
+                    self.assertEqual(algorithm._get_needed_options(), initial_needed)
+                algorithm.load_data(**arguments)
+                algorithm.execute()
+
+    def test_gk_load_rejects_overwriting_partially_configured_input(self):
+        for constructor, arguments, graph_change, _ in self.load_cases():
+            with self.subTest(algorithm=constructor.__name__):
+                algorithm = constructor()
+                algorithm._set_option("gk_graph", arguments["gk_graph"])
+                with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                    algorithm.load_data(**{**arguments, **graph_change})
+                algorithm.load_data(**{name: value for name, value in arguments.items()
+                                       if name != "gk_graph"})
+                algorithm.execute()
+                reference = constructor()
+                reference.load_data(**arguments)
+                reference.execute()
+                self.assertEqual(self.load_result(algorithm), self.load_result(reference))
+
+    def test_gk_failed_initial_load_keeps_same_source_reload_explicit(self):
+        header = ("subject_id,subject_type,predicate,object_kind,"
+                  "object_id_or_value,object_type\n")
+        csv = header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            for constructor, arguments, _, _ in self.load_cases():
+                with self.subTest(algorithm=constructor.__name__):
+                    path.write_text("invalid CSV\n")
+                    algorithm = constructor()
+                    key_arguments = {name: value for name, value in arguments.items()
+                                     if name != "gk_graph"}
+                    with self.assertRaises(RuntimeError):
+                        algorithm.load_data(gk_graph_path=path, **key_arguments)
+                    with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                        algorithm.load_data(**arguments)
+                    with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                        algorithm.load_data(gk_graph_path=path, **key_arguments)
+                    path.write_text(csv)
+                    algorithm.load_data()
+                    algorithm.execute()
+                    reference = constructor()
+                    reference.load_data(**arguments)
+                    reference.execute()
+                    self.assertEqual(self.load_result(algorithm), self.load_result(reference))
+
     def test_gk_model_and_key_data_model(self):
         _, key = self.make_graph_and_key()
 

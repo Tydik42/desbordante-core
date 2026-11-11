@@ -30,11 +30,33 @@ namespace py = pybind11;
 
 template <typename Algorithm, typename BoundClass>
 void BindExecution(BoundClass& cls) {
-    cls.def("load_data", [](Algorithm& algorithm, py::kwargs const& kwargs) {
-        configure_algorithm::ConfigureAlgo(algorithm, kwargs);
-        py::gil_scoped_release release;
-        algorithm.LoadData();
-    });
+    cls.def(
+            "load_data",
+            [](Algorithm& algorithm, py::kwargs const& kwargs) {
+                using namespace config::names;
+                auto const possible = algorithm.GetPossibleOptions();
+                auto const needed = algorithm.GetNeededOptions();
+                // ConfigureAlgo reads only needed options; do not silently drop
+                // explicit input arguments after loading or partial configuration.
+                for (auto const& argument : kwargs) {
+                    auto const name = argument.first.cast<std::string>();
+                    if ((name != kGkGraphData && name != kGkGraphPath && name != kGkKeyData &&
+                         name != kGkKeysData) ||
+                        !possible.contains(name))
+                        throw config::ConfigurationError("Unknown GK load_data option '" + name +
+                                                         "'");
+                    if (!needed.contains(name))
+                        throw config::ConfigurationError(
+                                "GK load_data option '" + name +
+                                "' is already configured or unavailable; create a new algorithm "
+                                "instance to change the input");
+                }
+                configure_algorithm::ConfigureAlgo(algorithm, kwargs);
+                py::gil_scoped_release release;
+                algorithm.LoadData();
+            },
+            "Configure and load input. To change a configured graph or key, create a new "
+            "algorithm instance. Call without arguments to reload the same input.");
     cls.def("execute", [](Algorithm& algorithm, py::kwargs const& kwargs) {
         using namespace config::names;
         try {
