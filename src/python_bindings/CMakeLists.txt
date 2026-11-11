@@ -225,12 +225,19 @@ desbordante_add_bind(
 )
 get_target_property(GK_COMPACT_VALIDATION_AVAILABLE ${DESBORDANTE_PREFIX}::gk_compact::validator
                     GK_COMPACT_KERNEL_AVAILABLE)
+get_target_property(GK_COMPACT_CHASE_AVAILABLE ${DESBORDANTE_PREFIX}::gk_compact::deduplicator
+                    GK_COMPACT_KERNEL_AVAILABLE)
 target_compile_definitions(${DESBORDANTE_PREFIX}.bind.gk_compact PRIVATE
     DESBORDANTE_GK_COMPACT_VALIDATION_AVAILABLE=$<BOOL:${GK_COMPACT_VALIDATION_AVAILABLE}>
+    DESBORDANTE_GK_COMPACT_CHASE_AVAILABLE=$<BOOL:${GK_COMPACT_CHASE_AVAILABLE}>
 )
 if(GK_COMPACT_VALIDATION_AVAILABLE)
     target_link_libraries(${DESBORDANTE_PREFIX}.bind.gk_compact PRIVATE
                           ${DESBORDANTE_PREFIX}::gk_compact::validator)
+endif()
+if(GK_COMPACT_CHASE_AVAILABLE)
+    target_link_libraries(${DESBORDANTE_PREFIX}.bind.gk_compact PRIVATE
+                          ${DESBORDANTE_PREFIX}::gk_compact::deduplicator)
 endif()
 
 desbordante_add_bind(

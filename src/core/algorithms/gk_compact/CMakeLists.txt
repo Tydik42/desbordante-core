@@ -13,7 +13,7 @@ target_sources(${NAME} PRIVATE model/key.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk_compact::graph
                                      ${DESBORDANTE_PREFIX}::gk::key)
 
-# Pair evaluation is shared by the validator and future Chase implementation.
+# Pair evaluation is shared by the validator and Chase.
 set(NAME gk_compact.eval)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE model/equivalence_relation.cpp evaluation/eval_gk.cpp)
@@ -46,5 +46,24 @@ target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::algos
                                      Boost::headers spdlog::spdlog_header_only)
 set_property(TARGET ${NAME} PROPERTY GK_COMPACT_KERNEL_AVAILABLE ${GK_COMPACT_VALIDATION_AVAILABLE})
 
-message(STATUS "Compact GK validation: ${GK_COMPACT_VALIDATION_AVAILABLE}")
+set(NAME gk_compact.chase)
+desbordante_add_lib(NAME)
+target_sources(${NAME} PRIVATE gk_deduplicator/chase_engine.cpp)
+target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk_compact::optimizations
+                                     ${DESBORDANTE_PREFIX}::gk_compact::key
+                                     ${DESBORDANTE_PREFIX}::config spdlog::spdlog_header_only)
+
+set(GK_COMPACT_CHASE_AVAILABLE ON)
+
+set(NAME gk_compact.deduplicator)
+desbordante_add_lib(NAME STATIC)
+target_sources(${NAME} PRIVATE gk_deduplicator/gk_deduplicator.cpp)
+target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::algos
+                                     ${DESBORDANTE_PREFIX}::config
+                                     ${DESBORDANTE_PREFIX}::gk_compact::chase
+                                     ${DESBORDANTE_PREFIX}::gk_compact::parser
+                                     Boost::headers spdlog::spdlog_header_only)
+set_property(TARGET ${NAME} PROPERTY GK_COMPACT_KERNEL_AVAILABLE ${GK_COMPACT_CHASE_AVAILABLE})
+
+message(STATUS "Compact GK kernels: validation=${GK_COMPACT_VALIDATION_AVAILABLE}, chase=${GK_COMPACT_CHASE_AVAILABLE}")
 message(STATUS "Compact GK optimizations: localization=${GK_COMPACT_LOCALIZATION_AVAILABLE}, pairing=${GK_COMPACT_PAIRING_AVAILABLE}, reduction=${GK_COMPACT_REDUCTION_AVAILABLE}")

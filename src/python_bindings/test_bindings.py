@@ -288,6 +288,12 @@ class TestGkBindings(unittest.TestCase):
                 {"gk_graph": verification.CompactGraph.from_triples(graph), "gk_key": key},
                 {"gk_graph": verification.CompactGraph.from_triples([])}, {"gk_key": other_key},
             ))
+        if getattr(deduplication, "compact_deduplicator_available", False):
+            cases.append((
+                deduplication.algorithms.CompactGkDeduplicator,
+                {"gk_graph": verification.CompactGraph.from_triples(graph), "gk_keys": [key]},
+                {"gk_graph": verification.CompactGraph.from_triples([])}, {"gk_keys": []},
+            ))
         return cases
 
     @staticmethod
@@ -472,6 +478,7 @@ class TestGkBindings(unittest.TestCase):
         source.append(gk.Triple(gk.Node(gk.NodeKind.ENTITY, "c", "X"),
                                 "unrelated", gk.Node(gk.NodeKind.VALUE, "other")))
         graph = gk.CompactGraph.from_triples(iter(source))
+        self.assertIs(desb.gk_deduplication.CompactGraph, gk.CompactGraph)
         validator = gk.algorithms.CompactGkValidator()
         self.assertFalse(hasattr(validator, "timing_stats"))
         with self.assertRaises(RuntimeError):
@@ -684,6 +691,91 @@ class TestGkDeduplicationBindings(unittest.TestCase):
             gk.Triple(entity("c2", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
         ]
         return graph, [entity_key, value_key]
+
+    def test_compact_chase_reaches_fixed_point_with_all_optimizations(self):
+        module = desb.gk_deduplication
+        self.assertTrue(module.compact_deduplicator_available)
+        self.assertIs(module.algorithms.Default, module.algorithms.GkDeduplicator)
+        graph, keys = self.make_graph_and_keys()
+        algorithm = module.algorithms.CompactGkDeduplicator()
+        self.assertEqual(algorithm._get_option_type("gk_graph"), (module.CompactGraph,))
+        self.assertEqual(algorithm._get_option_type("gk_keys"), (list, module.GraphKey))
+        with self.assertRaises(RuntimeError):
+            algorithm.get_clusters()
+        algorithm.load_data(gk_graph=module.CompactGraph.from_triples(graph), gk_keys=keys)
+        gc.collect()
+        for options in ({}, {"use_localization": True},
+                        {"use_localization": True, "use_pairing_filter": True},
+                        {"use_localization": True, "use_pairing_filter": True,
+                         "use_subgraph_reduction": True}, {}):
+            algorithm.execute(**options)
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            self.assertEqual(algorithm.cluster_count, 2)
+            self.assertEqual(algorithm.merge_count, 2)
+            self.assertEqual(algorithm.get_opts()["gk_graph"].edge_count, len(graph))
+            clusters = algorithm.get_clusters()
+            clusters[0].clear()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_compact_chase_loads_csv_and_rejects_execution_after_failed_reload(self):
+        module = desb.gk_deduplication
+        _, keys = self.make_graph_and_keys()
+        header = ("subject_id,subject_type,predicate,object_kind,"
+                  "object_id_or_value,object_type\n")
+        csv = header + ("a,A,p,entity,c1,Z\nb,A,p,entity,c2,Z\n"
+                        "c1,Z,code,value,shared,-\nc2,Z,code,value,shared,-\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            path.write_text(csv)
+            algorithm = module.algorithms.CompactGkDeduplicator()
+            algorithm.load_data(gk_graph_path=path, gk_keys=keys)
+            algorithm.execute(use_localization=True, use_pairing_filter=True,
+                              use_subgraph_reduction=True)
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            path.write_text("invalid CSV\n")
+            with self.assertRaises(RuntimeError):
+                algorithm.load_data()
+            with self.assertRaises(RuntimeError):
+                algorithm.execute()
+            with self.assertRaises(RuntimeError):
+                algorithm.get_clusters()
+            path.write_text(header)
+            algorithm.load_data()
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [])
+            self.assertEqual(algorithm.merge_count, 0)
+            path.write_text(csv)
+            algorithm.load_data()
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_compact_chase_preserves_singletons_and_checks_every_key(self):
+        module = desb.gk_deduplication
+        graph, keys = self.make_graph_and_keys()
+        key = keys[0]
+        absent = module.GraphKey(
+            [module.PatternTriple(key.root, "absent", key.pattern[0].object)],
+            key.types, key.root,
+        )
+        for source, input_keys, expected in (
+                (graph, [], [["a"], ["b"], ["c1"], ["c2"]]),
+                (graph, [absent], [["a"], ["b"], ["c1"], ["c2"]]),
+                (graph, [absent, *keys], [["a", "b"], ["c1", "c2"]]),
+                ([], keys, [])):
+            algorithm = module.algorithms.CompactGkDeduplicator()
+            algorithm.load_data(gk_graph=module.CompactGraph.from_triples(source),
+                                gk_keys=input_keys)
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), expected)
+        invalid = module.GraphKey(
+            key.pattern, key.types, module.Variable(module.VarKind.ENTITY, "absent"),
+        )
+        algorithm = module.algorithms.CompactGkDeduplicator()
+        with self.assertRaises(ValueError):
+            algorithm.load_data(gk_graph=module.CompactGraph.from_triples([]),
+                                gk_keys=[absent, invalid])
+        with self.assertRaises(RuntimeError):
+            algorithm.get_clusters()
 
     def test_shared_descriptors_clusters_and_repeated_execution(self):
         module = desb.gk_deduplication

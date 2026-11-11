@@ -455,6 +455,18 @@ desbordante_add_test(
 
 # --- GK ---
 desbordante_add_test(
+    gk_compact.deduplicator
+    SRCS test_gk_compact_deduplicator.cpp
+    LIBS ${DESBORDANTE_PREFIX}::gk_compact::deduplicator
+         ${DESBORDANTE_PREFIX}::gk_compact::chase
+         ${DESBORDANTE_PREFIX}::gk_compact::key
+         ${DESBORDANTE_PREFIX}::gk::chase
+         ${DESBORDANTE_PREFIX}::config
+         spdlog::spdlog_header_only
+         Boost::headers
+)
+
+desbordante_add_test(
     gk_compact.validator
     SRCS test_gk_compact_validator.cpp
     LIBS ${DESBORDANTE_PREFIX}::gk_compact::validator

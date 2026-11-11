@@ -20,6 +20,9 @@
 #if DESBORDANTE_GK_COMPACT_VALIDATION_AVAILABLE
 #include "core/algorithms/gk_compact/gk_validator/gk_validator.h"
 #endif
+#if DESBORDANTE_GK_COMPACT_CHASE_AVAILABLE
+#include "core/algorithms/gk_compact/gk_deduplicator/gk_deduplicator.h"
+#endif
 
 namespace {
 
@@ -85,6 +88,7 @@ namespace python_bindings {
 
 void BindGkCompact(py::module_& main_module) {
     auto verification = main_module.attr("gk_verification").cast<py::module_>();
+    auto deduplication = main_module.attr("gk_deduplication").cast<py::module_>();
 
     py::class_<Graph, std::shared_ptr<Graph>>(verification, "CompactGraph")
             .def_static(
@@ -114,8 +118,11 @@ void BindGkCompact(py::module_& main_module) {
                     << ", input_triples=" << graph.GetInputTripleCount() << ')';
                 return out.str();
             });
+    deduplication.attr("CompactGraph") = verification.attr("CompactGraph");
     verification.attr("compact_validator_available") =
             bool(DESBORDANTE_GK_COMPACT_VALIDATION_AVAILABLE);
+    deduplication.attr("compact_deduplicator_available") =
+            bool(DESBORDANTE_GK_COMPACT_CHASE_AVAILABLE);
 
     // Register in the existing algorithms modules. BindPrimitiveNoBase would
     // unintentionally replace their Default algorithms.
@@ -128,6 +135,19 @@ void BindGkCompact(py::module_& main_module) {
             .def("get_violations", [](algos::CompactGkValidator const& algorithm) {
                 return algorithm.GetViolations();
             });
+#endif
+#if DESBORDANTE_GK_COMPACT_CHASE_AVAILABLE
+    auto dedup_algorithms = deduplication.attr("algorithms").cast<py::module_>();
+    auto deduplicator = detail::RegisterAlgorithm<algos::CompactGkDeduplicator, algos::Algorithm>(
+            dedup_algorithms, "CompactGkDeduplicator");
+    BindExecution<algos::CompactGkDeduplicator>(deduplicator);
+    deduplicator
+            .def("get_clusters",
+                 [](algos::CompactGkDeduplicator const& algorithm) {
+                     return algorithm.GetClusters();
+                 })
+            .def_property_readonly("cluster_count", &algos::CompactGkDeduplicator::GetClusterCount)
+            .def_property_readonly("merge_count", &algos::CompactGkDeduplicator::GetMergeCount);
 #endif
 }
 

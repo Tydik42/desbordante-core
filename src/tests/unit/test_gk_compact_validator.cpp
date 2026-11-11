@@ -273,6 +273,7 @@ TEST(GkCompactValidatorTest, IdentityEquivalenceKeepsTheFullIdDomainWithoutDsuAr
     EXPECT_EQ(eq.GetClassCount(), count);
     EXPECT_TRUE(eq.IsIdentity());
     EXPECT_TRUE(eq.AreEquivalent(last, last));
+    EXPECT_EQ(eq.GetRepresentative(last), last);
     EXPECT_FALSE(eq.AreEquivalent(0, last));
     EXPECT_FALSE(eq.Merge(last, last));
     EXPECT_THROW(eq.Merge(0, invalid), std::out_of_range);
@@ -310,6 +311,8 @@ TEST(GkCompactValidatorTest, FirstMergeMaterializesDsuAndPreservesTheEntityDomai
     EXPECT_EQ(eq.GetClasses(), (std::vector<std::vector<compact::VertexId>>{{0, 1, 2, 3}}));
     EXPECT_EQ(eq.GetEntityCount(), 4U);
     EXPECT_EQ(eq.GetClassCount(), 1U);
+    EXPECT_EQ(eq.GetRepresentative(0), eq.GetRepresentative(3));
+    EXPECT_THROW(eq.GetRepresentative(4), std::out_of_range);
     EXPECT_THROW(eq.AreEquivalent(4, 4), std::out_of_range);
 }
 

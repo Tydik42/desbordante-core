@@ -21,6 +21,13 @@ public:
     EquivalenceRelation& operator=(EquivalenceRelation&& other) noexcept;
 
     bool AreEquivalent(VertexId first, VertexId second) const;
+
+    // A read-only class representative, valid until the next Merge. Useful for
+    // grouping only active entities without materializing classes for the full domain.
+    VertexId GetRepresentative(VertexId vertex) const {
+        return FindRoot(vertex);
+    }
+
     bool Merge(VertexId first, VertexId second);
     std::vector<std::vector<VertexId>> GetClasses() const;
 
