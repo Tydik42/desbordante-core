@@ -282,6 +282,12 @@ class TestGkBindings(unittest.TestCase):
              {"gk_graph": graph, "gk_keys": [key]},
              {"gk_graph": []}, {"gk_keys": []}),
         ]
+        if getattr(verification, "compact_validator_available", False):
+            cases.append((
+                verification.algorithms.CompactGkValidator,
+                {"gk_graph": verification.CompactGraph.from_triples(graph), "gk_key": key},
+                {"gk_graph": verification.CompactGraph.from_triples([])}, {"gk_key": other_key},
+            ))
         return cases
 
     @staticmethod
