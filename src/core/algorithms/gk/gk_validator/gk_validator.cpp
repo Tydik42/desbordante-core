@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "core/algorithms/gk/model/equivalence_relation.h"
-#include "core/algorithms/gk/model/validation.h"
+#include "core/algorithms/gk/model/graph_builder.h"
 #include "core/algorithms/gk/optimizations/evaluation.h"
 #include "core/algorithms/gk/parser/graph_parser.h"
 #include "core/config/gk/option.h"
@@ -62,7 +62,7 @@ void GkValidator::LoadDataInternal() {
         graph_ = gk::parser::ReadGraph(graph_path_);
     else
         gk::CheckGraph(graph_);
-    key_ = gk::CompileKey(source_key_);
+    key_ = gk::BuildGraphKey(source_key_);
     data_ready_ = true;
     LOG_DEBUG("Loaded GK validation data: {} triples, {} pattern triples", graph_.size(),
               source_key_.Q.size());

@@ -26,6 +26,6 @@ struct PairingRelation {
 };
 
 // Greatest structural-support relation; independent of Eq and injectivity.
-PairingRelation ComputePairing(CompiledKey const& key, GraphView first, GraphView second);
+PairingRelation ComputePairing(GraphKey const& key, GraphView first, GraphView second);
 
 }  // namespace gk

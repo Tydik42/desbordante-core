@@ -37,6 +37,9 @@ using Graph = std::vector<Triple>;
 
 namespace gk {
 using VertexPair = std::pair<model::Node, model::Node>;
+
+// Preserve first-occurrence order, including entities appearing only as objects.
+std::vector<model::Node> CollectEntities(model::Graph const& graph);
 }  // namespace gk
 
 template <>

@@ -27,8 +27,8 @@ public:
 private:
     gk::model::Graph graph_;
     std::filesystem::path graph_path_;
-    gk::model::GraphKey source_key_;
-    std::optional<gk::CompiledKey> key_;
+    gk::model::GraphKeyDescriptor source_key_;
+    std::optional<gk::GraphKey> key_;
     std::optional<gk::ValidationResult> result_;
     bool data_ready_ = false;
     bool use_localization_ = false;

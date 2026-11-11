@@ -48,7 +48,7 @@ void ConfigureExecution(algos::Algorithm& algorithm, bool localization, bool pai
 }
 
 using gk::model::Graph;
-using gk::model::GraphKey;
+using gk::model::GraphKeyDescriptor;
 using gk::model::Node;
 using gk::model::NodeKind;
 using gk::model::Pattern;
@@ -82,20 +82,21 @@ Node Value(std::string value) {
     return {NodeKind::kValue, std::move(value), {}};
 }
 
-GraphKey MakeKey(Pattern pattern, std::initializer_list<std::pair<Variable, TypeId>> type_entries,
-                 Variable root) {
+GraphKeyDescriptor MakeKey(Pattern pattern,
+                           std::initializer_list<std::pair<Variable, TypeId>> type_entries,
+                           Variable root) {
     std::unordered_map<Variable, TypeId> types;
     for (auto const& [variable, type] : type_entries) types.emplace(variable, type);
     return {std::move(pattern), std::move(types), std::move(root)};
 }
 
-GraphKey OneEdgeEntityKey() {
+GraphKeyDescriptor OneEdgeEntityKey() {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
     return MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
 }
 
-GraphKey OneEdgeWildcardKey() {
+GraphKeyDescriptor OneEdgeWildcardKey() {
     Variable const x = EntityVariable("x");
     Variable const y = Wildcard("y");
     return MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
@@ -105,26 +106,27 @@ gk::EquivalenceRelation Identity(std::initializer_list<std::string> entities) {
     return gk::EquivalenceRelation{std::vector<std::string>(entities)};
 }
 
-bool Evaluate(GraphKey const& key, gk::EquivalenceRelation const& eq, Graph const& first_graph,
-              Graph const& second_graph, Node const& first_root, Node const& second_root) {
-    auto const compiled = gk::CompileKey(key);
-    gk::EvalGK eval(compiled);
+bool Evaluate(GraphKeyDescriptor const& key, gk::EquivalenceRelation const& eq,
+              Graph const& first_graph, Graph const& second_graph, Node const& first_root,
+              Node const& second_root) {
+    auto const graph_key = gk::BuildGraphKey(key);
+    gk::EvalGK eval(graph_key);
     bool const baseline = eval.Evaluate({first_graph, second_graph, first_root, second_root}, eq);
-    auto const radius = gk::GetPatternRadius(gk::CompileKey(key));
+    auto const radius = gk::GetPatternRadius(gk::BuildGraphKey(key));
     std::array<Node const*, 1> const first_roots{&first_root}, second_roots{&second_root};
     for (auto const [localization, pairing, reduction] : kExecutionModes) {
         gk::Neighborhoods first(first_graph, first_roots, radius),
                 second(second_graph, second_roots, radius);
         auto const left = localization ? first[0] : gk::GraphView(first_graph);
         auto const right = localization ? second[0] : gk::GraphView(second_graph);
-        EXPECT_EQ(gk::EvaluatePair(eval, compiled, {left, right, first_root, second_root}, eq,
+        EXPECT_EQ(gk::EvaluatePair(eval, graph_key, {left, right, first_root, second_root}, eq,
                                    pairing, reduction),
                   baseline);
     }
     return baseline;
 }
 
-std::unique_ptr<algos::GkValidator> CreateValidator(Graph graph, GraphKey key) {
+std::unique_ptr<algos::GkValidator> CreateValidator(Graph graph, GraphKeyDescriptor key) {
     auto validator = std::make_unique<algos::GkValidator>();
     validator->SetOption(config::names::kGkGraphData, boost::any{std::move(graph)});
     validator->SetOption(config::names::kGkKeyData, boost::any{std::move(key)});
@@ -136,7 +138,7 @@ void SetBaselineExecutionOptions(algos::GkValidator& validator) {
     validator.SetOption(config::names::kGkUseLocalization, false);
 }
 
-void ExpectInvalidDescriptor(Graph graph, GraphKey key, std::string_view label) {
+void ExpectInvalidDescriptor(Graph graph, GraphKeyDescriptor key, std::string_view label) {
     SCOPED_TRACE(std::string(label));
     EXPECT_THROW(CreateValidator(std::move(graph), std::move(key)), std::invalid_argument);
 }
@@ -229,14 +231,31 @@ TEST(GkValidatorTest, GkValidatorJointMappingSupportsLifecycleAndInjectivity) {
     EXPECT_EQ(mapping.All().size(), 1U);
 }
 
+TEST(GkValidatorTest, GkValidatorBuildsIndependentGraphKeyFromDescriptor) {
+    auto descriptor = OneEdgeEntityKey();
+    EXPECT_NO_THROW(descriptor.Check());
+
+    gk::GraphKey const key = gk::BuildGraphKey(descriptor);
+    EXPECT_EQ(key.traversal_order, (gk::TraversalOrder{0}));
+    EXPECT_EQ(key.descriptor.Q.front().predicate, descriptor.Q.front().predicate);
+    EXPECT_EQ(key.descriptor.T_Q, descriptor.T_Q);
+    EXPECT_EQ(key.descriptor.root_x, descriptor.root_x);
+
+    descriptor.Q.front().predicate.clear();
+    EXPECT_FALSE(key.descriptor.Q.front().predicate.empty());
+    EXPECT_NO_THROW(key.descriptor.Check());
+    EXPECT_THROW(descriptor.Check(), std::invalid_argument);
+    EXPECT_THROW(gk::BuildGraphKey(descriptor), std::invalid_argument);
+}
+
 TEST(GkValidatorTest, GkValidatorTraversalOrderRejectsEmptyOrDisconnectedPattern) {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
     Variable const z = EntityVariable("z");
     Variable const w = EntityVariable("w");
-    EXPECT_THROW(gk::CompileKey(MakeKey({}, {{x, "X"}}, x)), std::invalid_argument);
-    EXPECT_THROW(gk::CompileKey(MakeKey({{x, "p", y}, {z, "q", w}},
-                                        {{x, "X"}, {y, "Y"}, {z, "Z"}, {w, "W"}}, x)),
+    EXPECT_THROW(gk::BuildGraphKey(MakeKey({}, {{x, "X"}}, x)), std::invalid_argument);
+    EXPECT_THROW(gk::BuildGraphKey(MakeKey({{x, "p", y}, {z, "q", w}},
+                                           {{x, "X"}, {y, "Y"}, {z, "Z"}, {w, "W"}}, x)),
                  std::invalid_argument);
 }
 
@@ -245,9 +264,9 @@ TEST(GkValidatorTest, GkValidatorTraversalOrderIsDeterministicAndConnected) {
     Variable const y = EntityVariable("y");
     Variable const z = EntityVariable("z");
     Variable const w = EntityVariable("w");
-    GraphKey const key = MakeKey({{z, "q", w}, {x, "p", y}, {y, "r", z}},
-                                 {{x, "X"}, {y, "Y"}, {z, "Z"}, {w, "W"}}, x);
-    gk::EvalGK const eval(gk::CompileKey(key));
+    GraphKeyDescriptor const key = MakeKey({{z, "q", w}, {x, "p", y}, {y, "r", z}},
+                                           {{x, "X"}, {y, "Y"}, {z, "Z"}, {w, "W"}}, x);
+    gk::EvalGK const eval(gk::BuildGraphKey(key));
     gk::TraversalOrder const& order = eval.GetTraversalOrder();
 
     ASSERT_EQ(order, (gk::TraversalOrder{1, 2, 0}));
@@ -277,21 +296,21 @@ TEST(GkValidatorTest, GkValidatorEvalGkAcceptsOutgoingAndIncomingEdges) {
     Variable const y = EntityVariable("y");
     Graph const outgoing_first = {{Entity("a", "X"), "p", Entity("target", "Y")}};
     Graph const outgoing_second = {{Entity("b", "X"), "p", Entity("target", "Y")}};
-    GraphKey const outgoing_key = MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
+    GraphKeyDescriptor const outgoing_key = MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
     gk::EquivalenceRelation const outgoing_eq = Identity({"a", "b", "target"});
     EXPECT_TRUE(Evaluate(outgoing_key, outgoing_eq, outgoing_first, outgoing_second,
                          Entity("a", "X"), Entity("b", "X")));
 
     Graph const incoming_first = {{Entity("target", "Y"), "p", Entity("a", "X")}};
     Graph const incoming_second = {{Entity("target", "Y"), "p", Entity("b", "X")}};
-    GraphKey const incoming_key = MakeKey({{{y, "p", x}}}, {{x, "X"}, {y, "Y"}}, x);
+    GraphKeyDescriptor const incoming_key = MakeKey({{{y, "p", x}}}, {{x, "X"}, {y, "Y"}}, x);
     gk::EquivalenceRelation const incoming_eq = Identity({"a", "b", "target"});
     EXPECT_TRUE(Evaluate(incoming_key, incoming_eq, incoming_first, incoming_second,
                          Entity("a", "X"), Entity("b", "X")));
 }
 
 TEST(GkValidatorTest, GkValidatorEvalGkRejectsMissingAndMismatchedEdges) {
-    GraphKey const key = OneEdgeEntityKey();
+    GraphKeyDescriptor const key = OneEdgeEntityKey();
     gk::EquivalenceRelation const eq = Identity({"a", "b", "target"});
     Graph const first = {{Entity("a", "X"), "p", Entity("target", "Y")}};
     Graph const second = {{Entity("b", "X"), "p", Entity("target", "Y")}};
@@ -303,7 +322,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkRejectsMissingAndMismatchedEdges) {
 }
 
 TEST(GkValidatorTest, GkValidatorEvalGkChecksCandidateEntityTypes) {
-    GraphKey const key = OneEdgeEntityKey();
+    GraphKeyDescriptor const key = OneEdgeEntityKey();
     Graph const graph = {{Entity("a", "X"), "p", Entity("target", "Y")}};
     gk::EquivalenceRelation const eq = Identity({"a", "b", "target"});
 
@@ -311,19 +330,19 @@ TEST(GkValidatorTest, GkValidatorEvalGkChecksCandidateEntityTypes) {
                           {{Entity("b", "X"), "p", Entity("target", "Z")}}, Entity("a", "X"),
                           Entity("b", "X")));
 
-    GraphKey missing_root_type = key;
+    GraphKeyDescriptor missing_root_type = key;
     missing_root_type.T_Q.erase(missing_root_type.root_x);
-    EXPECT_THROW(gk::CompileKey(missing_root_type), std::invalid_argument);
+    EXPECT_THROW(gk::BuildGraphKey(missing_root_type), std::invalid_argument);
 }
 
 TEST(GkValidatorTest, GkValidatorEvalGkAppliesEquivalenceToEntityVariables) {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
-    GraphKey const key = MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
+    GraphKeyDescriptor const key = MakeKey({{{x, "p", y}}}, {{x, "X"}, {y, "Y"}}, x);
     Graph const first = {{Entity("a", "X"), "p", Entity("left", "Y")}};
     Graph const second = {{Entity("b", "X"), "p", Entity("right", "Y")}};
     gk::EquivalenceRelation eq = Identity({"a", "b", "left", "right"});
-    gk::EvalGK eval(gk::CompileKey(key));
+    gk::EvalGK eval(gk::BuildGraphKey(key));
 
     EXPECT_FALSE(eval.Evaluate({first, second, Entity("a", "X"), Entity("b", "X")}, eq));
     eq.Merge("left", "right");
@@ -335,8 +354,9 @@ TEST(GkValidatorTest, GkValidatorEvalGkHandlesWildcardsValuesAndConstants) {
     Variable const wildcard = Wildcard("wildcard");
     Variable const value = ValueVariable("value");
     Variable const constant = Constant("fixed");
-    GraphKey const key = MakeKey({{{x, "p", wildcard}, {x, "q", value}, {x, "r", constant}}},
-                                 {{x, "X"}, {wildcard, "Y"}}, x);
+    GraphKeyDescriptor const key =
+            MakeKey({{{x, "p", wildcard}, {x, "q", value}, {x, "r", constant}}},
+                    {{x, "X"}, {wildcard, "Y"}}, x);
     Graph const first = {{Entity("a", "X"), "p", Entity("left-wildcard", "Y")},
                          {Entity("a", "X"), "q", Value("same")},
                          {Entity("a", "X"), "r", Value("fixed")}};
@@ -373,7 +393,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkEnforcesInjectivity) {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
     Variable const z = EntityVariable("z");
-    GraphKey const entity_key =
+    GraphKeyDescriptor const entity_key =
             MakeKey({{{x, "p", y}, {x, "q", z}}}, {{x, "X"}, {y, "Y"}, {z, "Y"}}, x);
 
     Graph const same_target_first = {{Entity("a", "X"), "p", Entity("same", "Y")},
@@ -395,7 +415,8 @@ TEST(GkValidatorTest, GkValidatorEvalGkEnforcesInjectivity) {
 
     Variable const value = ValueVariable("value");
     Variable const other_value = ValueVariable("other_value");
-    GraphKey const value_key = MakeKey({{{x, "p", value}, {x, "q", other_value}}}, {{x, "X"}}, x);
+    GraphKeyDescriptor const value_key =
+            MakeKey({{{x, "p", value}, {x, "q", other_value}}}, {{x, "X"}}, x);
     Graph const duplicate_values_first = {{Entity("a", "X"), "p", Value("same")},
                                           {Entity("a", "X"), "q", Value("same")}};
     Graph const duplicate_values_second = {{Entity("b", "X"), "p", Value("same")},
@@ -404,7 +425,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkEnforcesInjectivity) {
                           duplicate_values_second, Entity("a", "X"), Entity("b", "X")));
 
     Variable const fixed = Constant("same");
-    GraphKey const value_constant_key =
+    GraphKeyDescriptor const value_constant_key =
             MakeKey({{{x, "p", value}, {x, "q", fixed}}}, {{x, "X"}}, x);
     EXPECT_FALSE(Evaluate(value_constant_key, Identity({"a", "b"}), duplicate_values_first,
                           duplicate_values_second, Entity("a", "X"), Entity("b", "X")));
@@ -416,7 +437,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkBacktracksInBothDirections) {
     Variable const z = EntityVariable("z");
     gk::EquivalenceRelation const eq = Identity({"a", "b", "bad-y", "good-y", "good-z"});
 
-    GraphKey const forward_key =
+    GraphKeyDescriptor const forward_key =
             MakeKey({{{x, "p", y}, {y, "q", z}}}, {{x, "X"}, {y, "Y"}, {z, "Z"}}, x);
     Graph const forward_first = {{Entity("a", "X"), "p", Entity("bad-y", "Y")},
                                  {Entity("a", "X"), "p", Entity("good-y", "Y")},
@@ -427,7 +448,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkBacktracksInBothDirections) {
     EXPECT_TRUE(Evaluate(forward_key, eq, forward_first, forward_second, Entity("a", "X"),
                          Entity("b", "X")));
 
-    GraphKey const backward_key =
+    GraphKeyDescriptor const backward_key =
             MakeKey({{{y, "p", x}, {z, "q", y}}}, {{x, "X"}, {y, "Y"}, {z, "Z"}}, x);
     Graph const backward_first = {{Entity("bad-y", "Y"), "p", Entity("a", "X")},
                                   {Entity("good-y", "Y"), "p", Entity("a", "X")},
@@ -442,7 +463,8 @@ TEST(GkValidatorTest, GkValidatorEvalGkBacktracksInBothDirections) {
 TEST(GkValidatorTest, GkValidatorEvalGkChecksBoundEdgesAndSelfLoops) {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
-    GraphKey const cycle_key = MakeKey({{{x, "p", y}, {y, "q", x}}}, {{x, "X"}, {y, "Y"}}, x);
+    GraphKeyDescriptor const cycle_key =
+            MakeKey({{{x, "p", y}, {y, "q", x}}}, {{x, "X"}, {y, "Y"}}, x);
     Graph const cycle_first = {{Entity("a", "X"), "p", Entity("target", "Y")},
                                {Entity("target", "Y"), "q", Entity("a", "X")}};
     Graph const cycle_second = {{Entity("b", "X"), "p", Entity("target", "Y")},
@@ -454,7 +476,7 @@ TEST(GkValidatorTest, GkValidatorEvalGkChecksBoundEdgesAndSelfLoops) {
                           {{Entity("b", "X"), "p", Entity("target", "Y")}}, Entity("a", "X"),
                           Entity("b", "X")));
 
-    GraphKey const self_loop_key = MakeKey({{{x, "p", x}}}, {{x, "X"}}, x);
+    GraphKeyDescriptor const self_loop_key = MakeKey({{{x, "p", x}}}, {{x, "X"}}, x);
     Graph const self_loop_first = {{Entity("a", "X"), "p", Entity("a", "X")}};
     Graph const self_loop_second = {{Entity("b", "X"), "p", Entity("b", "X")}};
     EXPECT_TRUE(Evaluate(self_loop_key, eq, self_loop_first, self_loop_second, Entity("a", "X"),
@@ -462,12 +484,12 @@ TEST(GkValidatorTest, GkValidatorEvalGkChecksBoundEdgesAndSelfLoops) {
 }
 
 TEST(GkValidatorTest, GkValidatorEvalGkDoesNotLeakMappingBetweenCalls) {
-    GraphKey const key = OneEdgeEntityKey();
+    GraphKeyDescriptor const key = OneEdgeEntityKey();
     Graph const graph = {{Entity("a", "X"), "p", Entity("first-target", "Y")},
                          {Entity("b", "X"), "p", Entity("second-target", "Y")},
                          {Entity("c", "X"), "p", Entity("first-target", "Y")}};
     gk::EquivalenceRelation const eq = Identity({"a", "b", "c", "first-target", "second-target"});
-    gk::EvalGK eval(gk::CompileKey(key));
+    gk::EvalGK eval(gk::BuildGraphKey(key));
 
     EXPECT_FALSE(eval.Evaluate({graph, graph, Entity("a", "X"), Entity("b", "X")}, eq));
     EXPECT_TRUE(eval.Evaluate({graph, graph, Entity("a", "X"), Entity("c", "X")}, eq));
@@ -484,7 +506,7 @@ TEST(GkValidatorTest, GkValidatorRegistersOptionsAndAppliesDefaults) {
     EXPECT_TRUE(possible.contains(config::names::kGkUseSubgraphReduction));
     EXPECT_EQ(validator.GetTypeIndex(config::names::kGkGraphData), typeid(Graph));
     EXPECT_EQ(validator.GetTypeIndex(config::names::kGkGraphPath), typeid(std::filesystem::path));
-    EXPECT_EQ(validator.GetTypeIndex(config::names::kGkKeyData), typeid(GraphKey));
+    EXPECT_EQ(validator.GetTypeIndex(config::names::kGkKeyData), typeid(GraphKeyDescriptor));
 
     validator.SetOption(config::names::kGkGraphData, boost::any{SharedTargetGraph()});
     validator.SetOption(config::names::kGkKeyData, boost::any{OneEdgeEntityKey()});
@@ -619,8 +641,9 @@ TEST(GkValidatorTest, GkValidatorAcceptsValidDescriptorsAndEmptyGraph) {
     Variable const wildcard = Wildcard("wildcard");
     Variable const value = ValueVariable("value");
     Variable const constant = Constant("fixed");
-    GraphKey const key = MakeKey({{{x, "p", wildcard}, {x, "q", value}, {x, "r", constant}}},
-                                 {{x, "X"}, {wildcard, "Y"}}, x);
+    GraphKeyDescriptor const key =
+            MakeKey({{{x, "p", wildcard}, {x, "q", value}, {x, "r", constant}}},
+                    {{x, "X"}, {wildcard, "Y"}}, x);
     auto validator = CreateValidator({}, key);
     SetBaselineExecutionOptions(*validator);
     EXPECT_NO_THROW(validator->Execute());
@@ -797,7 +820,7 @@ TEST(GkValidatorTest, GkValidatorNeighborhoodsUseUndirectedDistancesAndInducedTr
     auto const x = EntityVariable("x"), y = EntityVariable("y"), z = EntityVariable("z");
     auto const key =
             MakeKey({{x, "p", y}, {y, "p", z}, {z, "p", x}}, {{x, "X"}, {y, "X"}, {z, "X"}}, x);
-    EXPECT_EQ(gk::GetPatternRadius(gk::CompileKey(key)), 1U);
+    EXPECT_EQ(gk::GetPatternRadius(gk::BuildGraphKey(key)), 1U);
     std::array<Node const*, 1> const roots{&a};
     gk::Neighborhoods const zero(graph, roots, 0), one(graph, roots, 1);
     EXPECT_EQ(zero[0].Base().size(), 1U);
@@ -816,16 +839,16 @@ TEST(GkValidatorTest, GkValidatorNeighborhoodsUseUndirectedDistancesAndInducedTr
 
 TEST(GkValidatorTest, GkValidatorTraversalChecksReadyConstraintsBeforeExpansion) {
     auto const x = EntityVariable("x"), y = Wildcard("y"), z = ValueVariable("z");
-    auto const compiled = gk::CompileKey(
+    auto const graph_key = gk::BuildGraphKey(
             MakeKey({{x, "p", y}, {y, "name", z}, {y, "back", x}, {x, "loop", x}, {y, "loop", y}},
                     {{x, "X"}, {y, "Y"}}, x));
     std::unordered_set<Variable> reached{x};
     std::unordered_set<std::size_t> used;
-    for (auto index : compiled.traversal_order) {
-        auto const& next = compiled.descriptor.Q[index];
+    for (auto index : graph_key.traversal_order) {
+        auto const& next = graph_key.descriptor.Q[index];
         if (!reached.contains(next.subject) || !reached.contains(next.object)) {
-            for (std::size_t other = 0; other < compiled.descriptor.Q.size(); ++other) {
-                auto const& triple = compiled.descriptor.Q[other];
+            for (std::size_t other = 0; other < graph_key.descriptor.Q.size(); ++other) {
+                auto const& triple = graph_key.descriptor.Q[other];
                 EXPECT_FALSE(!used.contains(other) && reached.contains(triple.subject) &&
                              reached.contains(triple.object));
             }
@@ -846,7 +869,7 @@ TEST(GkValidatorTest, GkValidatorPairingIsOnlyANecessaryCondition) {
     graph.push_back({Entity("b", "X"), "q", Entity("shared", "Y")});
     auto const first = Entity("a", "X");
     auto const second = Entity("b", "X");
-    auto const relation = gk::ComputePairing(gk::CompileKey(key), graph, graph);
+    auto const relation = gk::ComputePairing(gk::BuildGraphKey(key), graph, graph);
     EXPECT_TRUE(relation.Contains(key.root_x, first, second));
     // P^Q admits y and z sharing an image; exact search must reject non-injective embeddings.
     EXPECT_FALSE(Evaluate(key, Identity({"a", "b", "shared"}), graph, graph, first, second));
@@ -860,7 +883,7 @@ TEST(GkValidatorTest, GkValidatorReductionKeepsInducedEdgesAndDuplicateFacts) {
     graph.push_back({first, "noise", Entity("junk", "Z")});
     graph.push_back({Entity("shared", "Y"), "note", Value("ignored")});
     graph.push_back(graph.front());
-    auto const key = gk::CompileKey(OneEdgeEntityKey());
+    auto const key = gk::BuildGraphKey(OneEdgeEntityKey());
     auto const relation = gk::ComputePairing(key, graph, graph);
     ASSERT_TRUE(relation.Contains(key.descriptor.root_x, first, second));
     auto const first_graph = gk::ReduceSubgraph(graph, relation, gk::PairingProjection::kFirst);
@@ -888,14 +911,14 @@ TEST(GkValidatorTest, GkValidatorPairingPropagatesMissingSupportToTheRoot) {
                          {Entity("c", "Y"), "code", Value("one")}};
     Graph const second = {{Entity("b", "X"), "p", Entity("d", "Y")},
                           {Entity("d", "Y"), "code", Value("two")}};
-    gk::EvalGK evaluator(gk::CompileKey(key));
-    EXPECT_FALSE(gk::EvaluatePair(evaluator, gk::CompileKey(key),
+    gk::EvalGK evaluator(gk::BuildGraphKey(key));
+    EXPECT_FALSE(gk::EvaluatePair(evaluator, gk::BuildGraphKey(key),
                                   {first, second, Entity("a", "X"), Entity("b", "X")},
                                   Identity({"a", "b", "c", "d"}), true, true));
 }
 
 TEST(GkValidatorTest, GkValidatorRejectsMalformedGraphDescriptors) {
-    GraphKey const key = OneEdgeEntityKey();
+    GraphKeyDescriptor const key = OneEdgeEntityKey();
 
     ExpectInvalidDescriptor({{Value("subject"), "p", Entity("object", "Y")}}, key, "value subject");
     ExpectInvalidDescriptor({{Entity("subject", "X"), "", Entity("object", "Y")}}, key,
@@ -920,82 +943,82 @@ TEST(GkValidatorTest, GkValidatorRejectsMalformedGraphDescriptors) {
 TEST(GkValidatorTest, GkValidatorRejectsMalformedKeyDescriptors) {
     Variable const x = EntityVariable("x");
     Variable const y = EntityVariable("y");
-    GraphKey const base = OneEdgeEntityKey();
+    GraphKeyDescriptor const base = OneEdgeEntityKey();
     Graph const graph = SharedTargetGraph();
 
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q.clear();
         ExpectInvalidDescriptor(graph, std::move(key), "empty pattern");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].predicate.clear();
         ExpectInvalidDescriptor(graph, std::move(key), "empty predicate");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].object.name.clear();
         ExpectInvalidDescriptor(graph, std::move(key), "empty variable name");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].object.kind = static_cast<VarKind>(99);
         ExpectInvalidDescriptor(graph, std::move(key), "unknown variable kind");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].object = ValueVariable("x");
         key.T_Q.erase(y);
         EXPECT_NO_THROW(CreateValidator(graph, std::move(key)));
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].subject = ValueVariable("subject");
         ExpectInvalidDescriptor(graph, std::move(key), "value subject");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q[0].subject = Constant("subject");
         ExpectInvalidDescriptor(graph, std::move(key), "constant subject");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q.erase(x);
         ExpectInvalidDescriptor(graph, std::move(key), "missing root type");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.root_x = EntityVariable("");
         ExpectInvalidDescriptor(graph, std::move(key), "empty root name");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.root_x = EntityVariable("outside");
         ExpectInvalidDescriptor(graph, std::move(key), "root outside pattern");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q.erase(y);
         ExpectInvalidDescriptor(graph, std::move(key), "missing non-root type");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q[y].clear();
         ExpectInvalidDescriptor(graph, std::move(key), "empty type");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q[y] = "-";
         ExpectInvalidDescriptor(graph, std::move(key), "reserved type");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.root_x = Wildcard("x");
         ExpectInvalidDescriptor(graph, std::move(key), "non-entity root");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         Variable const z = EntityVariable("z");
         key.Q.push_back({z, "q", EntityVariable("w")});
         key.T_Q.emplace(z, "Z");
@@ -1003,17 +1026,17 @@ TEST(GkValidatorTest, GkValidatorRejectsMalformedKeyDescriptors) {
         ExpectInvalidDescriptor(graph, std::move(key), "disconnected pattern");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q.emplace(EntityVariable("outside"), "Z");
         ExpectInvalidDescriptor(graph, std::move(key), "type outside pattern");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.T_Q.emplace(ValueVariable("value"), "D");
         ExpectInvalidDescriptor(graph, std::move(key), "type for data variable");
     }
     {
-        GraphKey key = base;
+        GraphKeyDescriptor key = base;
         key.Q.push_back(key.Q.front());
         ExpectInvalidDescriptor(graph, std::move(key), "duplicate triple");
     }

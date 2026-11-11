@@ -14,8 +14,7 @@
 namespace gk {
 
 Neighborhoods PrepareNeighborhoods(model::Graph const& input,
-                                   std::span<model::Node const* const> roots,
-                                   CompiledKey const& key) {
+                                   std::span<model::Node const* const> roots, GraphKey const& key) {
 #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
     bool const localization_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
     auto const localization_started = localization_trace ? std::chrono::steady_clock::now()
@@ -32,7 +31,7 @@ Neighborhoods PrepareNeighborhoods(model::Graph const& input,
     return result;
 }
 
-bool EvaluatePair(EvalGK& evaluator, CompiledKey const& key, EvalGKInput const& input,
+bool EvaluatePair(EvalGK& evaluator, GraphKey const& key, EvalGKInput const& input,
                   EquivalenceRelation const& eq, bool use_pairing_filter,
                   bool use_subgraph_reduction) {
     assert(!use_subgraph_reduction || use_pairing_filter);

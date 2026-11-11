@@ -39,10 +39,13 @@ struct PatternTriple {
 
 using Pattern = std::vector<PatternTriple>;
 
-struct GraphKey {
+struct GraphKeyDescriptor {
     Pattern Q;
     std::unordered_map<Variable, TypeId> T_Q;
     Variable root_x;
+
+    // Check the descriptor shape and types, not whether the key holds in a graph.
+    void Check() const;
 };
 
 }  // namespace gk::model
@@ -51,13 +54,13 @@ namespace gk {
 
 using TraversalOrder = std::vector<std::size_t>;
 
-// Prepared once at the boundary. Storage remains string-based; only the
+// Built once at the boundary. Storage remains string-based; only the
 // execution order is derived. Ready constraints precede further expansion.
-struct CompiledKey {
-    model::GraphKey descriptor;
+struct GraphKey {
+    model::GraphKeyDescriptor descriptor;
     TraversalOrder traversal_order;
 };
 
-CompiledKey CompileKey(model::GraphKey key);
+GraphKey BuildGraphKey(model::GraphKeyDescriptor key);
 
 }  // namespace gk

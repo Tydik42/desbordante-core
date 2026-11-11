@@ -101,10 +101,12 @@ py::tuple GetPyType(std::type_index type_index) {
             kPyTypePair<std::vector<std::string>, &PyList_Type, &PyUnicode_Type>,
             {typeid(gk::model::Graph),
              []() { return MakeTypeTuple(&PyList_Type, py::type::of<gk::model::Triple>()); }},
-            {typeid(gk::model::GraphKey),
-             []() { return MakeTypeTuple(py::type::of<gk::model::GraphKey>()); }},
-            {typeid(std::vector<gk::model::GraphKey>),
-             []() { return MakeTypeTuple(&PyList_Type, py::type::of<gk::model::GraphKey>()); }},
+            {typeid(gk::model::GraphKeyDescriptor),
+             []() { return MakeTypeTuple(py::type::of<gk::model::GraphKeyDescriptor>()); }},
+            {typeid(std::vector<gk::model::GraphKeyDescriptor>),
+             []() {
+                 return MakeTypeTuple(&PyList_Type, py::type::of<gk::model::GraphKeyDescriptor>());
+             }},
             kPyTypePair<config::CustomRandomSeedType, &PyLong_Type>,
             kPyTypePair<algos::metric::Metric, &PyUnicode_Type>,
             kPyTypePair<algos::metric::MetricAlgo, &PyUnicode_Type>,

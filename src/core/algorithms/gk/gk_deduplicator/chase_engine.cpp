@@ -5,7 +5,6 @@
 #include <utility>
 
 #include "core/algorithms/gk/evaluation/eval_gk.h"
-#include "core/algorithms/gk/model/validation.h"
 #include "core/algorithms/gk/optimizations/evaluation.h"
 #include "core/config/gk/option.h"
 #include "core/util/logger.h"
@@ -24,9 +23,9 @@ struct RootGroup {
 
 }  // namespace
 
-ChaseEngine::ChaseEngine(std::vector<model::GraphKey> const& keys) {
+ChaseEngine::ChaseEngine(std::vector<model::GraphKeyDescriptor> const& keys) {
     keys_.reserve(keys.size());
-    for (auto const& key : keys) keys_.push_back(CompileKey(key));
+    for (auto const& key : keys) keys_.push_back(BuildGraphKey(key));
 }
 
 ChaseRunResult ChaseEngine::Run(model::Graph const& graph, bool use_localization,

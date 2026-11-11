@@ -10,7 +10,7 @@
 namespace gk {
 
 // The key and source graph are already validated. Distances ignore direction.
-std::size_t GetPatternRadius(CompiledKey const& key);
+std::size_t GetPatternRadius(GraphKey const& key);
 
 // String graphs deliberately keep their original representation. Own induced
 // graph copies once per root, not once per pair; preserve duplicate triples.

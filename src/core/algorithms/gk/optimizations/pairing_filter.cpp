@@ -40,7 +40,7 @@ GraphIndex IndexGraph(Graph const& graph) {
 }
 
 bool Compatible(Variable const& variable, Node const& first, Node const& second,
-                GraphKey const& key) {
+                GraphKeyDescriptor const& key) {
     switch (variable.kind) {
         case VarKind::kEntity:
         case VarKind::kWildcard:
@@ -75,9 +75,9 @@ bool HasSupport(VertexPair const& pair, PredicateId const& predicate, Adjacency 
 
 }  // namespace
 
-PairingRelation ComputePairing(CompiledKey const& compiled, GraphView first_graph,
+PairingRelation ComputePairing(GraphKey const& graph_key, GraphView first_graph,
                                GraphView second_graph) {
-    auto const& key = compiled.descriptor;
+    auto const& key = graph_key.descriptor;
     std::vector<Variable> variables;
     std::vector<std::pair<std::size_t, std::size_t>> endpoints;
     auto index_of = [&](Variable const& variable) {

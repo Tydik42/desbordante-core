@@ -31,7 +31,7 @@ public:
 private:
     gk::model::Graph graph_;
     std::filesystem::path graph_path_;
-    std::vector<gk::model::GraphKey> source_keys_;
+    std::vector<gk::model::GraphKeyDescriptor> source_keys_;
     std::optional<gk::ChaseEngine> engine_;
     std::optional<gk::DeduplicationResult> result_;
     bool use_localization_ = false;

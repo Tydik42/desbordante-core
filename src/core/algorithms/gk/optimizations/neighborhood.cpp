@@ -8,8 +8,8 @@
 
 namespace gk {
 
-std::size_t GetPatternRadius(CompiledKey const& compiled) {
-    auto const& key = compiled.descriptor;
+std::size_t GetPatternRadius(GraphKey const& graph_key) {
+    auto const& key = graph_key.descriptor;
     std::unordered_map<model::Variable, std::size_t> indices;
     std::vector<std::vector<std::size_t>> adjacency;
     auto intern = [&](model::Variable const& variable) {

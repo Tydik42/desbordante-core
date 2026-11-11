@@ -56,7 +56,7 @@ void BindExecution(BoundClass& cls) {
     });
 }
 
-using gk::model::GraphKey;
+using gk::model::GraphKeyDescriptor;
 using gk::model::Pattern;
 using gk::model::PatternTriple;
 using gk::model::TypeId;
@@ -123,7 +123,7 @@ void AppendVariable(std::string& result, Variable const& variable) {
     AppendField(result, variable.name);
 }
 
-std::string CanonicalGraphKey(GraphKey const& key) {
+std::string CanonicalGraphKey(GraphKeyDescriptor const& key) {
     std::string result;
 
     result += "root";
@@ -150,7 +150,7 @@ std::string CanonicalGraphKey(GraphKey const& key) {
     return result;
 }
 
-std::string FormatGraphKey(GraphKey const& key) {
+std::string FormatGraphKey(GraphKeyDescriptor const& key) {
     std::vector<PatternTriple> pattern = key.Q;
     std::sort(pattern.begin(), pattern.end(), PatternTripleLess);
 
@@ -186,7 +186,7 @@ Variable DeserializeVariable(py::handle state) {
                     variable_state[1].cast<std::string>()};
 }
 
-py::tuple SerializeGraphKey(GraphKey const& key) {
+py::tuple SerializeGraphKey(GraphKeyDescriptor const& key) {
     py::list pattern_state;
     for (PatternTriple const& triple : key.Q) {
         pattern_state.append(py::make_tuple(SerializeVariable(triple.subject), triple.predicate,
@@ -205,7 +205,7 @@ py::tuple SerializeGraphKey(GraphKey const& key) {
     return py::make_tuple(1, pattern_state, type_state, SerializeVariable(key.root_x));
 }
 
-GraphKey DeserializeGraphKey(py::tuple state) {
+GraphKeyDescriptor DeserializeGraphKey(py::tuple state) {
     if (state.size() != 4) {
         throw std::runtime_error("Invalid state for GraphKey pickle.");
     }
@@ -236,7 +236,7 @@ GraphKey DeserializeGraphKey(py::tuple state) {
         types.emplace(DeserializeVariable(entry[0]), entry[1].cast<TypeId>());
     }
 
-    return GraphKey{std::move(pattern), std::move(types), DeserializeVariable(state[3])};
+    return GraphKeyDescriptor{std::move(pattern), std::move(types), DeserializeVariable(state[3])};
 }
 
 }  // namespace
@@ -315,25 +315,26 @@ void BindGk(pybind11::module_& main_module) {
                        lhs.object == rhs.object;
             });
 
-    py::class_<GraphKey> graph_key(gk_module, "GraphKey");
+    py::class_<GraphKeyDescriptor> graph_key(gk_module, "GraphKey");
     graph_key
             .def(py::init([](Pattern pattern, std::unordered_map<Variable, TypeId> types,
                              Variable root) {
-                     return GraphKey{std::move(pattern), std::move(types), std::move(root)};
+                     return GraphKeyDescriptor{std::move(pattern), std::move(types),
+                                               std::move(root)};
                  }),
                  "pattern"_a, "types"_a, "root"_a)
-            .def_property_readonly("pattern", [](GraphKey const& key) { return key.Q; })
-            .def_property_readonly("types", [](GraphKey const& key) { return key.T_Q; })
-            .def_property_readonly("root", [](GraphKey const& key) { return key.root_x; })
+            .def_property_readonly("pattern", [](GraphKeyDescriptor const& key) { return key.Q; })
+            .def_property_readonly("types", [](GraphKeyDescriptor const& key) { return key.T_Q; })
+            .def_property_readonly("root", [](GraphKeyDescriptor const& key) { return key.root_x; })
             .def("to_string", &FormatGraphKey)
             .def("__str__", &FormatGraphKey)
             .def("__repr__", &FormatGraphKey)
             .def("__eq__",
-                 [](GraphKey const& lhs, GraphKey const& rhs) {
+                 [](GraphKeyDescriptor const& lhs, GraphKeyDescriptor const& rhs) {
                      return CanonicalGraphKey(lhs) == CanonicalGraphKey(rhs);
                  })
             .def("__hash__",
-                 [](GraphKey const& key) {
+                 [](GraphKeyDescriptor const& key) {
                      return std::hash<std::string>{}(CanonicalGraphKey(key));
                  })
             .def(py::pickle(&SerializeGraphKey, &DeserializeGraphKey));

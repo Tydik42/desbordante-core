@@ -5,7 +5,7 @@
 
 namespace gk {
 
-EvalGK::EvalGK(CompiledKey key) : key_(std::move(key)) {}
+EvalGK::EvalGK(GraphKey key) : key_(std::move(key)) {}
 
 bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) {
     m_.Reset();

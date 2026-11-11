@@ -44,8 +44,8 @@ Node Value(std::string value) {
     return {NodeKind::kValue, std::move(value), {}};
 }
 
-GraphKey EntityKey(std::string root_type = "X", std::string neighbor_type = "X",
-                   std::string predicate = "p") {
+GraphKeyDescriptor EntityKey(std::string root_type = "X", std::string neighbor_type = "X",
+                             std::string predicate = "p") {
     Variable const x{VarKind::kEntity, "x"};
     Variable const y{VarKind::kEntity, "y"};
     return {{{x, std::move(predicate), y}},
@@ -53,7 +53,7 @@ GraphKey EntityKey(std::string root_type = "X", std::string neighbor_type = "X",
             x};
 }
 
-GraphKey ValueKey(std::string root_type = "X", std::string predicate = "code") {
+GraphKeyDescriptor ValueKey(std::string root_type = "X", std::string predicate = "code") {
     Variable const x{VarKind::kEntity, "x"};
     Variable const value{VarKind::kValue, "value"};
     return {{{x, std::move(predicate), value}}, {{x, std::move(root_type)}}, x};
@@ -66,7 +66,7 @@ Graph DependentGraph() {
             {Entity("c2", "Z"), "code", Value("shared")}};
 }
 
-std::vector<GraphKey> DependentKeys() {
+std::vector<GraphKeyDescriptor> DependentKeys() {
     return {EntityKey("A", "Z"), ValueKey("Z")};
 }
 
@@ -78,7 +78,7 @@ struct Embeddings {
     std::size_t root;
 };
 
-Embeddings EnumerateEmbeddings(Graph const& graph, GraphKey const& key) {
+Embeddings EnumerateEmbeddings(Graph const& graph, GraphKeyDescriptor const& key) {
     Embeddings result;
     std::vector<Node> domain;
     for (auto const& triple : graph) {
@@ -135,7 +135,7 @@ Embeddings EnumerateEmbeddings(Graph const& graph, GraphKey const& key) {
     return result;
 }
 
-Clusters ReferenceChase(Graph const& graph, std::vector<GraphKey> const& keys) {
+Clusters ReferenceChase(Graph const& graph, std::vector<GraphKeyDescriptor> const& keys) {
     std::vector<std::string> entities;
     for (auto const& triple : graph) {
         for (auto const& node : {triple.subject, triple.object}) {
@@ -206,7 +206,8 @@ Clusters ReferenceChase(Graph const& graph, std::vector<GraphKey> const& keys) {
 TEST(GkDeduplicatorTest, EmptyInputsAndMissingRootTypesProduceIdentity) {
     EXPECT_TRUE(gk::ChaseEngine({}).Run({}).clusters.empty());
     Graph const graph = {{Entity("a"), "p", Entity("b")}};
-    for (auto const& keys : {std::vector<GraphKey>{}, std::vector<GraphKey>{ValueKey("absent")}}) {
+    for (auto const& keys :
+         {std::vector<GraphKeyDescriptor>{}, std::vector<GraphKeyDescriptor>{ValueKey("absent")}}) {
         auto const result = gk::ChaseEngine(keys).Run(graph);
         EXPECT_EQ(result.clusters, (Clusters{{"a"}, {"b"}}));
         EXPECT_EQ(result.merge_count, 0U);
@@ -266,9 +267,10 @@ TEST(GkDeduplicatorTest, HandlesWildcardsValuesConstantsIncomingEdgesAndCycles) 
     Variable const w{VarKind::kWildcard, "w"};
     Variable const value{VarKind::kValue, "value"};
     Variable const constant{VarKind::kConstant, "fixed"};
-    GraphKey const key{{{w, "p", x}, {x, "back", w}, {x, "code", value}, {x, "status", constant}},
-                       {{x, "X"}, {w, "Y"}},
-                       x};
+    GraphKeyDescriptor const key{
+            {{w, "p", x}, {x, "back", w}, {x, "code", value}, {x, "status", constant}},
+            {{x, "X"}, {w, "Y"}},
+            x};
     for (bool const matching : {true, false}) {
         Graph const graph = {{Entity("y1", "Y"), "p", Entity("a")},
                              {Entity("y2", "Y"), "p", Entity("b")},
@@ -311,7 +313,7 @@ TEST(GkDeduplicatorTest, MatchesIndependentEmbeddingEnumerationOnSmallGraphs) {
     auto mixed = EntityKey();
     Variable const value{VarKind::kValue, "v"};
     mixed.Q.push_back({mixed.Q.front().object, "code", value});
-    std::vector<std::vector<GraphKey>> const key_sets = {
+    std::vector<std::vector<GraphKeyDescriptor>> const key_sets = {
             {EntityKey()}, {ValueKey()}, {EntityKey(), ValueKey()}, {mixed}};
     for (unsigned int mask = 0; mask < 64; ++mask) {
         SCOPED_TRACE(mask);
@@ -344,7 +346,7 @@ TEST(GkDeduplicatorTest, AdapterRegistersOptionsAndResetsResults) {
     EXPECT_THROW(algorithm.Execute(), std::logic_error);
     EXPECT_EQ(algorithm.GetTypeIndex(kGkGraphData), typeid(Graph));
     EXPECT_EQ(algorithm.GetTypeIndex(kGkGraphPath), typeid(std::filesystem::path));
-    EXPECT_EQ(algorithm.GetTypeIndex(kGkKeysData), typeid(std::vector<GraphKey>));
+    EXPECT_EQ(algorithm.GetTypeIndex(kGkKeysData), typeid(std::vector<GraphKeyDescriptor>));
     algorithm.SetOption(kGkGraphData, DependentGraph());
     algorithm.SetOption(kGkKeysData, DependentKeys());
     algorithm.LoadData();
@@ -413,7 +415,7 @@ TEST(GkDeduplicatorTest, AdapterRejectsMissingAmbiguousAndInvalidInputs) {
         auto key = EntityKey("absent");
         key.T_Q.clear();
         algorithm.SetOption(kGkGraphData, Graph{});
-        algorithm.SetOption(kGkKeysData, std::vector<GraphKey>{key});
+        algorithm.SetOption(kGkKeysData, std::vector<GraphKeyDescriptor>{key});
         EXPECT_THROW(algorithm.LoadData(), std::invalid_argument);
     }
 }
@@ -423,7 +425,7 @@ TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndSwitchesOptimizations) {
     for (Graph const& graph : {Graph{}, DependentGraph()}) {
         algos::GkDeduplicator algorithm;
         algorithm.SetOption(kGkGraphData, graph);
-        algorithm.SetOption(kGkKeysData, std::vector<GraphKey>{});
+        algorithm.SetOption(kGkKeysData, std::vector<GraphKeyDescriptor>{});
         algorithm.LoadData();
         algorithm.SetOption(kGkUseLocalization);
         algorithm.Execute();

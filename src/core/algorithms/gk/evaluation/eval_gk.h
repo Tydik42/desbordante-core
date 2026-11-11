@@ -18,11 +18,11 @@ struct EvalGKInput {
     model::Node const& second_root;
 };
 
-// Exact pair search only. The caller supplies a compiled, valid key and ready
+// Exact pair search only. The caller supplies a valid GraphKey and ready
 // graphs. No options, localization, pairing, reduction or timers live here.
 class EvalGK {
 public:
-    explicit EvalGK(CompiledKey key);
+    explicit EvalGK(GraphKey key);
     bool Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq);
 
     TraversalOrder const& GetTraversalOrder() const& noexcept {
@@ -32,7 +32,7 @@ public:
     TraversalOrder const& GetTraversalOrder() const&& = delete;
 
 private:
-    CompiledKey key_;
+    GraphKey key_;
     JointMapping m_;
 
     bool SearchStep(std::size_t step, EvalGKInput const& input, EquivalenceRelation const& eq);

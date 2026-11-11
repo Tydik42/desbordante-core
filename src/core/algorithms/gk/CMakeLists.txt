@@ -1,19 +1,14 @@
-set(NAME gk.common)
-desbordante_add_lib(NAME)
-target_sources(${NAME} PRIVATE model/validation.cpp)
-target_link_libraries(${NAME} PRIVATE magic_enum::magic_enum spdlog::spdlog_header_only)
-
 set(NAME gk.graph)
 desbordante_add_lib(NAME)
-target_sources(${NAME} PRIVATE model/graph_builder.cpp)
-target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk::common)
+target_sources(${NAME} PRIVATE model/graph.cpp model/graph_builder.cpp)
+target_link_libraries(${NAME} PRIVATE magic_enum::magic_enum spdlog::spdlog_header_only)
 
 add_subdirectory(parser)
 
 set(NAME gk.key)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE model/key.cpp)
-target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk::common)
+target_link_libraries(${NAME} PRIVATE magic_enum::magic_enum spdlog::spdlog_header_only)
 
 set(NAME gk.eval)
 desbordante_add_lib(NAME)
@@ -38,6 +33,7 @@ set(NAME gk.chase)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE gk_deduplicator/chase_engine.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk::optimizations
+                                     ${DESBORDANTE_PREFIX}::gk::graph
                                      ${DESBORDANTE_PREFIX}::config spdlog::spdlog_header_only)
 
 set(NAME gk.deduplicator)

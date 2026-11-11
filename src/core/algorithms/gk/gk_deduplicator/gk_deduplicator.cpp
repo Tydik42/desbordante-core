@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-#include "core/algorithms/gk/model/validation.h"
+#include "core/algorithms/gk/model/graph_builder.h"
 #include "core/algorithms/gk/parser/graph_parser.h"
 #include "core/config/gk/option.h"
 #include "core/config/names_and_descriptions.h"
