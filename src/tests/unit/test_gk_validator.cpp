@@ -877,6 +877,8 @@ TEST(GkValidatorTest, GkValidatorRejectsMalformedGraphDescriptors) {
                             "empty entity identifier");
     ExpectInvalidDescriptor({{Entity("subject", ""), "p", Entity("object", "Y")}}, key,
                             "empty entity type");
+    ExpectInvalidDescriptor({{Entity("subject", "-"), "p", Entity("object", "Y")}}, key,
+                            "reserved entity type");
     ExpectInvalidDescriptor({{Entity("subject", "X"), "p", Value("")}}, key, "empty data value");
     ExpectInvalidDescriptor({{Entity("subject", "X"), "p", Node{NodeKind::kValue, "value", "Y"}}},
                             key, "typed data value");
@@ -951,6 +953,11 @@ TEST(GkValidatorTest, GkValidatorRejectsMalformedKeyDescriptors) {
         GraphKey key = base;
         key.T_Q[y].clear();
         ExpectInvalidDescriptor(graph, std::move(key), "empty type");
+    }
+    {
+        GraphKey key = base;
+        key.T_Q[y] = "-";
+        ExpectInvalidDescriptor(graph, std::move(key), "reserved type");
     }
     {
         GraphKey key = base;

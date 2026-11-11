@@ -10,15 +10,9 @@
 #include "core/algorithms/gk/evaluation_statistics.h"
 #include "core/algorithms/gk/graph_descriptor.h"
 #include "core/algorithms/gk/model/key.h"
+#include "core/algorithms/gk/result_types.h"
 
 namespace gk {
-
-using EntityPair = std::pair<model::EntityId, model::EntityId>;
-
-struct ValidationResult {
-    bool holds = true;
-    std::vector<EntityPair> violations;
-};
 
 // Diagnostics for the last load and/or execution.  Durations are monotonic-clock nanoseconds;
 // they are intended for profiling the PoC, not as a public wall-clock contract.
