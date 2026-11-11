@@ -17,6 +17,7 @@
 #include "core/algorithms/cfd/model/raw_cfd.h"
 #include "core/algorithms/dd/dd.h"
 #include "core/algorithms/gdd/gdd.h"
+#include "core/algorithms/gk/model/key.h"
 #include "core/algorithms/md/hymd/enums.h"
 #include "core/algorithms/md/hymd/hymd.h"
 #include "core/algorithms/md/md_verifier/column_similarity_classifier.h"
@@ -98,6 +99,14 @@ py::tuple GetPyType(std::type_index type_index) {
             kPyTypePair<long double, &PyFloat_Type>,
             kPyTypePair<std::size_t, &PyLong_Type>,
             kPyTypePair<std::vector<std::string>, &PyList_Type, &PyUnicode_Type>,
+            {typeid(gk::model::Graph),
+             []() { return MakeTypeTuple(&PyList_Type, py::type::of<gk::model::Triple>()); }},
+            {typeid(gk::model::GraphKeyDescriptor),
+             []() { return MakeTypeTuple(py::type::of<gk::model::GraphKeyDescriptor>()); }},
+            {typeid(std::vector<gk::model::GraphKeyDescriptor>),
+             []() {
+                 return MakeTypeTuple(&PyList_Type, py::type::of<gk::model::GraphKeyDescriptor>());
+             }},
             kPyTypePair<config::CustomRandomSeedType, &PyLong_Type>,
             kPyTypePair<algos::metric::Metric, &PyUnicode_Type>,
             kPyTypePair<algos::metric::MetricAlgo, &PyUnicode_Type>,

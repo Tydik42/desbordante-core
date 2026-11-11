@@ -21,6 +21,16 @@ desbordante_add_lib(NAME OBJECT)
 target_sources(${NAME} PRIVATE test_ind_util.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::ind gtest Boost::headers)
 
+# --- Algorithm options ---
+desbordante_add_test(
+    algorithm.options
+    SRCS
+    test_algorithm_options.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::algos
+    Boost::headers
+)
+
 # --- AC ---
 desbordante_add_test(
     ac
@@ -440,6 +450,30 @@ desbordante_add_test(
     ${DESBORDANTE_PREFIX}::testlib::gfd::paths
     spdlog::spdlog_header_only
     gmock
+    Boost::headers
+)
+
+# --- GK ---
+desbordante_add_test(
+    gk.validator
+    SRCS
+    test_gk_validator.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk::validator
+    ${DESBORDANTE_PREFIX}::algos
+    ${DESBORDANTE_PREFIX}::config
+    spdlog::spdlog_header_only
+    Boost::headers
+)
+
+desbordante_add_test(
+    gk.deduplicator
+    SRCS
+    test_gk_deduplicator.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk::chase
+    ${DESBORDANTE_PREFIX}::gk::deduplicator
+    ${DESBORDANTE_PREFIX}::config
     Boost::headers
 )
 

@@ -87,6 +87,14 @@ constexpr auto kTimeLimitSeconds = "time_limit";
 // GFD
 constexpr auto kGfdData = "gfd";
 constexpr auto kGraphData = "graph";
+// GK
+constexpr auto kGkGraphData = "gk_graph";
+constexpr auto kGkGraphPath = "gk_graph_path";
+constexpr auto kGkKeyData = "gk_key";
+constexpr auto kGkKeysData = "gk_keys";
+constexpr auto kGkUseLocalization = "use_localization";
+constexpr auto kGkUsePairingFilter = "use_pairing_filter";
+constexpr auto kGkUseSubgraphReduction = "use_subgraph_reduction";
 // gSpan
 constexpr auto kGraphDatabase = "graph_database";
 constexpr auto kGSpanMinimumSupport = "minsup";

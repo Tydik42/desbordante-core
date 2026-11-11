@@ -1,4 +1,5 @@
 import pathlib
+import pickle
 import tempfile
 import unittest
 from collections import namedtuple
@@ -233,6 +234,352 @@ class TestPythonBindings(unittest.TestCase):
                 with self.assertRaises(desb.ConfigurationError):
                     check_metric_verifier_failure(load.path, load.options)
                 
+
+class TestGkBindings(unittest.TestCase):
+    @staticmethod
+    def make_graph_and_key():
+        entity = desb.gk_verification.NodeKind.ENTITY
+        wildcard = desb.gk_verification.VarKind.WILDCARD
+        entity_var = desb.gk_verification.VarKind.ENTITY
+
+        x = desb.gk_verification.Variable(entity_var, "x")
+        y = desb.gk_verification.Variable(wildcard, "y")
+        key = desb.gk_verification.GraphKey(
+            [desb.gk_verification.PatternTriple(x, "p", y)],
+            {x: "X", y: "Y"},
+            x,
+        )
+
+        graph = [
+            desb.gk_verification.Triple(
+                desb.gk_verification.Node(entity, "a", "X"),
+                "p",
+                desb.gk_verification.Node(entity, "a_target", "Y"),
+            ),
+            desb.gk_verification.Triple(
+                desb.gk_verification.Node(entity, "b", "X"),
+                "p",
+                desb.gk_verification.Node(entity, "b_target", "Y"),
+            ),
+        ]
+        return graph, key
+
+    @classmethod
+    def load_cases(cls):
+        graph, key = cls.make_graph_and_key()
+        other_key = desb.gk_verification.GraphKey(
+            [desb.gk_verification.PatternTriple(key.root, "absent", key.pattern[0].object)],
+            key.types, key.root,
+        )
+        verification = desb.gk_verification
+        deduplication = desb.gk_deduplication
+        cases = [
+            (verification.algorithms.GkValidator,
+             {"gk_graph": graph, "gk_key": key},
+             {"gk_graph": []}, {"gk_key": other_key}),
+            (deduplication.algorithms.GkDeduplicator,
+             {"gk_graph": graph, "gk_keys": [key]},
+             {"gk_graph": []}, {"gk_keys": []}),
+        ]
+        return cases
+
+    @staticmethod
+    def load_result(algorithm):
+        if hasattr(algorithm, "get_violations"):
+            return algorithm.holds, algorithm.get_violations()
+        return algorithm.get_clusters()
+
+    def test_gk_load_rejects_replacing_configured_input(self):
+        for constructor, arguments, graph_change, key_change in self.load_cases():
+            reference = constructor()
+            reference.load_data(**arguments)
+            reference.execute()
+            expected = self.load_result(reference)
+            for executed in (False, True):
+                with self.subTest(algorithm=constructor.__name__, executed=executed):
+                    algorithm = constructor()
+                    algorithm.load_data(**arguments)
+                    if executed:
+                        algorithm.execute()
+                    for replacement in (graph_change, key_change,
+                                        {"gk_graph_path": "unused.csv"},
+                                        {**graph_change, **key_change}):
+                        with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                            algorithm.load_data(**replacement)
+                    algorithm.execute()
+                    self.assertEqual(self.load_result(algorithm), expected)
+                    algorithm.load_data()
+                    self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                    algorithm.execute()
+                    self.assertEqual(self.load_result(algorithm), expected)
+
+            for replacement in (graph_change, key_change):
+                fresh = constructor()
+                fresh.load_data(**{**arguments, **replacement})
+                fresh.execute()
+                self.assertNotEqual(self.load_result(fresh), expected)
+
+    def test_gk_load_rejects_unknown_and_execution_arguments(self):
+        for constructor, arguments, _, _ in self.load_cases():
+            with self.subTest(algorithm=constructor.__name__):
+                algorithm = constructor()
+                initial_needed = algorithm._get_needed_options()
+                wrong_key = "gk_keys" if "gk_key" in arguments else "gk_key"
+                for invalid in ({"gk_grap": []}, {"use_localization": True}, {wrong_key: None}):
+                    with self.assertRaisesRegex(ValueError, "Unknown GK load_data option"):
+                        algorithm.load_data(**{**arguments, **invalid})
+                    self.assertEqual(algorithm._get_needed_options(), initial_needed)
+                algorithm.load_data(**arguments)
+                algorithm.execute()
+
+    def test_gk_load_rejects_overwriting_partially_configured_input(self):
+        for constructor, arguments, graph_change, _ in self.load_cases():
+            with self.subTest(algorithm=constructor.__name__):
+                algorithm = constructor()
+                algorithm._set_option("gk_graph", arguments["gk_graph"])
+                with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                    algorithm.load_data(**{**arguments, **graph_change})
+                algorithm.load_data(**{name: value for name, value in arguments.items()
+                                       if name != "gk_graph"})
+                algorithm.execute()
+                reference = constructor()
+                reference.load_data(**arguments)
+                reference.execute()
+                self.assertEqual(self.load_result(algorithm), self.load_result(reference))
+
+    def test_gk_failed_initial_load_keeps_same_source_reload_explicit(self):
+        header = ("subject_id,subject_type,predicate,object_kind,"
+                  "object_id_or_value,object_type\n")
+        csv = header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            for constructor, arguments, _, _ in self.load_cases():
+                with self.subTest(algorithm=constructor.__name__):
+                    path.write_text("invalid CSV\n")
+                    algorithm = constructor()
+                    key_arguments = {name: value for name, value in arguments.items()
+                                     if name != "gk_graph"}
+                    with self.assertRaises(RuntimeError):
+                        algorithm.load_data(gk_graph_path=path, **key_arguments)
+                    with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                        algorithm.load_data(**arguments)
+                    with self.assertRaisesRegex(ValueError, "new algorithm instance"):
+                        algorithm.load_data(gk_graph_path=path, **key_arguments)
+                    path.write_text(csv)
+                    algorithm.load_data()
+                    algorithm.execute()
+                    reference = constructor()
+                    reference.load_data(**arguments)
+                    reference.execute()
+                    self.assertEqual(self.load_result(algorithm), self.load_result(reference))
+
+    def test_gk_model_and_key_data_model(self):
+        _, key = self.make_graph_and_key()
+
+        self.assertEqual(key, pickle.loads(pickle.dumps(key)))
+        self.assertEqual(len({key, pickle.loads(pickle.dumps(key))}), 1)
+        self.assertIn("GraphKey", str(key))
+        self.assertEqual(key.root.name, "x")
+        self.assertEqual(len(key.pattern), 1)
+        self.assertEqual(key.types[key.root], "X")
+
+        y = key.pattern[0].object
+        z = desb.gk_verification.Variable(desb.gk_verification.VarKind.WILDCARD, "z")
+        reordered = desb.gk_verification.GraphKey(
+            [
+                desb.gk_verification.PatternTriple(y, "q", z),
+                desb.gk_verification.PatternTriple(key.root, "p", y),
+            ],
+            {key.root: "X", y: "Y", z: "Z"},
+            key.root,
+        )
+        same_semantics = desb.gk_verification.GraphKey(
+            list(reversed(reordered.pattern)), reordered.types, reordered.root
+        )
+        self.assertEqual(reordered, same_semantics)
+
+    def test_gk_validator_uses_the_shared_graph_key_type(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+
+        self.assertEqual(validator._get_option_type("gk_graph"),
+                         (list, desb.gk_verification.Triple))
+        self.assertEqual(validator._get_option_type("gk_key"),
+                         (desb.gk_verification.GraphKey,))
+
+        validator.load_data(gk_graph=graph, gk_key=key)
+        self.assertEqual(validator.get_opts()["gk_key"], key)
+        self.assertEqual(validator.get_opts()["gk_graph"], graph)
+
+        validator.execute()
+
+        self.assertFalse(validator.holds)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        self.assertEqual(len(validator.get_violations()), 1)
+
+
+    def test_gk_does_not_expose_timing_statistics(self):
+        for module in (desb.gk_verification, desb.gk_deduplication):
+            for name in ("EvaluationStatistics", "ValidationTimingStats",
+                         "ChaseStatistics", "DeduplicationTimingStats"):
+                self.assertFalse(hasattr(module, name))
+        for algorithm in (desb.gk_verification.algorithms.GkValidator(),
+                          desb.gk_deduplication.algorithms.GkDeduplicator()):
+            self.assertFalse(hasattr(algorithm, "timing_stats"))
+
+    def test_gk_validator_loads_graph_from_csv_path(self):
+        _, key = self.make_graph_and_key()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            path.write_text(
+                'subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n'
+                '"a,quoted",X,p,entity,"target ""Y""",Y\n'
+                'b,X,p,entity,"target ""Y""",Y\n'
+            )
+
+            validator = desb.gk_verification.algorithms.GkValidator()
+            self.assertEqual(validator._get_option_type("gk_graph_path"), (str,))
+            validator.load_data(gk_graph_path=path, gk_key=key)
+            self.assertEqual(str(validator.get_opts()["gk_graph_path"]), str(path))
+            validator.execute()
+
+            self.assertFalse(validator.holds)
+            self.assertEqual(validator.get_violations(), [("a,quoted", "b")])
+
+    def test_gk_reload_resets_execution_options(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+        deduplicator = desb.gk_deduplication.algorithms.GkDeduplicator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+        deduplicator.load_data(gk_graph=graph, gk_keys=[key])
+        for algorithm in (validator, deduplicator):
+            for _ in range(2):
+                algorithm.load_data()
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                algorithm.execute(use_localization=True, use_pairing_filter=True,
+                                  use_subgraph_reduction=True)
+
+    def test_gk_optimizations_preserve_results(self):
+        graph, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        graph.append(gk.Triple(gk.Node(gk.NodeKind.ENTITY, "c", "X"),
+                               "other", gk.Node(gk.NodeKind.VALUE, "unrelated")))
+        validator = desb.gk_verification.algorithms.GkValidator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+
+        for localization, pairing, reduction in [(False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)]:
+            with self.subTest(pairing=pairing, reduction=reduction):
+                validator.execute(use_localization=localization, use_pairing_filter=pairing,
+                                  use_subgraph_reduction=reduction)
+                self.assertEqual(validator.get_violations(), [("a", "b")])
+
+
+
+    def test_gk_options_follow_config_dependencies(self):
+        graph, key = self.make_graph_and_key()
+        validator = desb.gk_verification.algorithms.GkValidator()
+        deduplicator = desb.gk_deduplication.algorithms.GkDeduplicator()
+        validator.load_data(gk_graph=graph, gk_key=key)
+        deduplicator.load_data(gk_graph=graph, gk_keys=[key])
+        for algorithm in (validator, deduplicator):
+            with self.subTest(algorithm=type(algorithm).__name__):
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+                for flag in ("use_localization", "use_pairing_filter", "use_subgraph_reduction"):
+                    self.assertEqual(algorithm._get_option_type(flag), (bool,))
+                with self.assertRaises(ValueError):
+                    algorithm.execute(use_pairing_filter=True)
+                with self.assertRaises(ValueError):
+                    algorithm.execute(use_localization=True, use_subgraph_reduction=True)
+                algorithm.execute(use_subgraph_reduction=True, use_pairing_filter=True,
+                                  use_localization=True)
+                algorithm._set_option("use_localization", True)
+                algorithm._set_option("use_pairing_filter", True)
+                algorithm._set_option("use_subgraph_reduction", True)
+                algorithm._set_option("use_localization", False)
+                with self.assertRaises(ValueError):
+                    algorithm._set_option("use_subgraph_reduction", True)
+                algorithm.execute()
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+
+
+class TestGkDeduplicationBindings(unittest.TestCase):
+    @staticmethod
+    def make_graph_and_keys():
+        gk = desb.gk_verification
+        x = gk.Variable(gk.VarKind.ENTITY, "x")
+        y = gk.Variable(gk.VarKind.ENTITY, "y")
+        value = gk.Variable(gk.VarKind.VALUE, "value")
+        entity_key = gk.GraphKey([gk.PatternTriple(x, "p", y)], {x: "A", y: "Z"}, x)
+        value_key = gk.GraphKey([gk.PatternTriple(x, "code", value)], {x: "Z"}, x)
+
+        def entity(identifier, entity_type):
+            return gk.Node(gk.NodeKind.ENTITY, identifier, entity_type)
+
+        graph = [
+            gk.Triple(entity("a", "A"), "p", entity("c1", "Z")),
+            gk.Triple(entity("b", "A"), "p", entity("c2", "Z")),
+            gk.Triple(entity("c1", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
+            gk.Triple(entity("c2", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
+        ]
+        return graph, [entity_key, value_key]
+
+    def test_shared_descriptors_clusters_and_repeated_execution(self):
+        module = desb.gk_deduplication
+        self.assertIs(module.GraphKey, desb.gk_verification.GraphKey)
+        graph, keys = self.make_graph_and_keys()
+        algorithm = module.algorithms.GkDeduplicator()
+        self.assertEqual(algorithm._get_option_type("gk_keys"), (list, module.GraphKey))
+        algorithm.load_data(gk_graph=graph, gk_keys=keys)
+        self.assertEqual(algorithm.get_opts()["gk_keys"], keys)
+        self.assertEqual(algorithm.get_opts()["gk_graph"], graph)
+        for _ in range(2):
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            self.assertEqual(algorithm.cluster_count, 2)
+            self.assertEqual(algorithm.merge_count, 2)
+            clusters = algorithm.get_clusters()
+            clusters[0].clear()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_loads_existing_csv_and_preserves_singletons_without_keys(self):
+        _, keys = self.make_graph_and_keys()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            path.write_text(
+                'subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n'
+                '"a,quoted",A,p,entity,c1,Z\n'
+                'b,A,p,entity,c2,Z\n'
+                'c1,Z,code,value,shared,-\n'
+                'c2,Z,code,value,shared,-\n'
+            )
+            for input_keys, expected in [
+                (keys, [["a,quoted", "b"], ["c1", "c2"]]),
+                ([], [["a,quoted"], ["b"], ["c1"], ["c2"]]),
+            ]:
+                algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+                algorithm.load_data(gk_graph_path=path, gk_keys=input_keys)
+                algorithm.execute()
+                self.assertEqual(algorithm.get_clusters(), expected)
+        algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+        algorithm.load_data(gk_graph=[], gk_keys=[])
+        algorithm.execute()
+        self.assertEqual(algorithm.get_clusters(), [])
+        self.assertEqual(algorithm.merge_count, 0)
+
+    def test_optimizations_preserve_recursive_chase_and_reset_results(self):
+        graph, keys = self.make_graph_and_keys()
+        algorithm = desb.gk_deduplication.algorithms.GkDeduplicator()
+        algorithm.load_data(gk_graph=graph, gk_keys=keys)
+        for localization, pairing, reduction in [(False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)]:
+            with self.subTest(pairing=pairing, reduction=reduction):
+                algorithm.execute(use_localization=localization, use_pairing_filter=pairing,
+                                  use_subgraph_reduction=reduction)
+                self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+                self.assertEqual(algorithm.merge_count, 2)
 
 
 class TestMaxFEM(unittest.TestCase):

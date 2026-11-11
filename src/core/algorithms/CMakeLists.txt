@@ -10,6 +10,7 @@ set(SUBDIRS
     fsm
     gdd
     gfd
+    gk
     ind
     md
     metric

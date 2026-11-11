@@ -22,6 +22,7 @@ target_sources(
             equal_nulls/option.cpp
             error/option.cpp
             error_measure/option.cpp
+            gk/option.cpp
             indices/option.cpp
             max_arity/option.cpp
             max_lhs/option.cpp
