@@ -16,7 +16,7 @@ target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk_compact::graph
 # Pair evaluation is shared by the validator and future Chase implementation.
 set(NAME gk_compact.eval)
 desbordante_add_lib(NAME)
-target_sources(${NAME} PRIVATE equivalence_relation.cpp evaluation/eval_gk.cpp)
+target_sources(${NAME} PRIVATE model/equivalence_relation.cpp evaluation/eval_gk.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk_compact::graph)
 
 # Preparation and optional kernels are outside exact EvalGK.

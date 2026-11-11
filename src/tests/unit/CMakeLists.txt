@@ -462,6 +462,7 @@ desbordante_add_test(
          ${DESBORDANTE_PREFIX}::gk_compact::key
          ${DESBORDANTE_PREFIX}::gk_compact::eval
          ${DESBORDANTE_PREFIX}::gk_compact::optimizations
+         spdlog::spdlog_header_only
          Boost::headers
 )
 

@@ -9,6 +9,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -16,16 +17,18 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include "core/algorithms/gk_compact/gk_validator/gk_validator.h"
-#include "core/algorithms/gk_compact/joint_mapping.h"
 #include "core/algorithms/gk_compact/model/graph_builder.h"
+#include "core/algorithms/gk_compact/model/joint_mapping.h"
 #include "core/algorithms/gk_compact/optimizations/evaluation.h"
 #include "core/algorithms/gk_compact/optimizations/neighborhood.h"
 #include "core/algorithms/gk_compact/optimizations/pairing_filter.h"
 #include "core/algorithms/gk_compact/optimizations/subgraph_reduction.h"
 #include "core/config/gk/option.h"
 #include "core/config/names.h"
+#include "core/util/logger.h"
 
 namespace {
 
@@ -548,6 +551,45 @@ TEST(GkCompactValidatorTest, SparseInputsUseOriginalIdsAndTheFullEquivalenceDoma
     validator.LoadData();
     Execute(validator);
     EXPECT_EQ(validator.GetViolations(), (std::vector<gk::EntityPair>{{"a", "b"}}));
+}
+
+TEST(GkCompactValidatorTest, LogsPhaseTimingsOnlyWhenTraceIsEnabled) {
+    auto const logger = util::logging::Initialize();
+
+    struct RestoreLogger {
+        std::shared_ptr<spdlog::logger> logger;
+        std::vector<spdlog::sink_ptr> sinks;
+        spdlog::level::level_enum level;
+
+        ~RestoreLogger() {
+            logger->sinks() = std::move(sinks);
+            logger->set_level(level);
+        }
+    } restore{logger, logger->sinks(), logger->level()};
+
+    std::ostringstream output;
+    logger->sinks() = {std::make_shared<spdlog::sinks::ostream_sink_mt>(output)};
+    logger->set_level(spdlog::level::trace);
+    std::shared_ptr<compact::Graph const> graph =
+            std::make_shared<compact::Graph const>(compact::BuildGraph(
+                    {{Entity("a"), "p", Entity("t", "Y")}, {Entity("b"), "p", Entity("t", "Y")}}));
+    algos::CompactGkValidator validator;
+    validator.SetOption(config::names::kGkGraphData, graph);
+    validator.SetOption(config::names::kGkKeyData, EntityKey());
+    validator.LoadData();
+    Execute(validator, true, true, true);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    for (auto phase :
+         {"load", "localization", "pairing", "reduction", "exact_search", "validation"})
+        EXPECT_NE(output.str().find(std::string("phase '") + phase + "':"), std::string::npos);
+#else
+    EXPECT_EQ(output.str().find("phase '"), std::string::npos);
+#endif
+    output.str("");
+    output.clear();
+    logger->set_level(spdlog::level::off);
+    Execute(validator, true, true, true);
+    EXPECT_TRUE(output.str().empty());
 }
 
 TEST(GkCompactValidatorTest, AdapterOwnsSharedGraphReportsAllPairsAndResetsResults) {

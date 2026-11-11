@@ -3,27 +3,16 @@
 #include <stdexcept>
 #include <utility>
 
-#include "core/algorithms/gk_compact/model/key.h"
+#include "core/algorithms/gk_compact/model/equivalence_relation.h"
 #include "core/algorithms/gk_compact/optimizations/evaluation.h"
 #include "core/algorithms/gk_compact/parser/graph_parser.h"
-#include "core/algorithms/gk_compact/trace.h"
 #include "core/config/gk/option.h"
 #include "core/config/names_and_descriptions.h"
 #include "core/util/logger.h"
 
-namespace {
-
-gk::ValidationResult Decode(gk_compact::Graph const& graph,
-                            std::vector<gk_compact::VertexPair> const& pairs) {
-    gk::ValidationResult result{pairs.empty(), {}};
-    result.violations.reserve(pairs.size());
-    for (auto const& [first, second] : pairs) {
-        result.violations.emplace_back(graph.GetLabel(first), graph.GetLabel(second));
-    }
-    return result;
-}
-
-}  // namespace
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
 
 namespace algos {
 
@@ -55,38 +44,43 @@ void CompactGkValidator::MakeExecuteOptsAvailable() {
 }
 
 void CompactGkValidator::LoadDataInternal() {
-    using gk_compact::TracePhase;
     UnsetOption(config::names::kGkUseLocalization);
     data_ready_ = false;
     key_.reset();
     result_.reset();
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const load_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const load_started =
+            load_trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     bool const has_graph = OptionIsSet(config::names::kGkGraphData);
     bool const has_path = OptionIsSet(config::names::kGkGraphPath);
     if (has_graph == has_path)
         throw config::ConfigurationError("Exactly one of gk_graph and gk_graph_path is required");
-    if (has_path) {
-        graph_ = TracePhase("source_load", [&] {
-            return std::make_shared<gk_compact::Graph const>(
-                    gk_compact::parser::ReadGraph(graph_path_));
-        });
-    }
+    if (has_path)
+        graph_ = std::make_shared<gk_compact::Graph const>(
+                gk_compact::parser::ReadGraph(graph_path_));
     if (!graph_) throw config::ConfigurationError("gk_graph must not be null");
-    auto const& graph = *graph_;
-    key_ = TracePhase("key_prepare", [&] { return gk_compact::CompileKey(source_key_, graph); });
+    key_ = gk_compact::CompileKey(source_key_, *graph_);
     data_ready_ = true;
     LOG_DEBUG("Loaded compact GK validation data: {} vertices, {} edges, key prepared={}",
-              graph.GetVertexCount(), graph.GetEdgeCount(), key_.has_value());
+              graph_->GetVertexCount(), graph_->GetEdgeCount(), key_.has_value());
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (load_trace)
+        LOG_TRACE("Compact GK phase 'load': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - load_started)
+                          .count());
+#endif
 }
 
 void CompactGkValidator::ResetState() {
-    // Option::Unset clears configuration state, not its backing field.
     if (!OptionIsSet(config::names::kGkUsePairingFilter)) use_pairing_filter_ = false;
     if (!OptionIsSet(config::names::kGkUseSubgraphReduction)) use_subgraph_reduction_ = false;
     result_.reset();
 }
 
 void CompactGkValidator::ExecuteInternal() {
-    using gk_compact::TracePhase;
     try {
         if (!data_ready_)
             throw std::logic_error("Compact GK validation data has not been loaded successfully");
@@ -96,46 +90,49 @@ void CompactGkValidator::ExecuteInternal() {
                 "Starting compact GK validation: localization={}, pairing_filter={}, "
                 "subgraph_reduction={}",
                 use_localization_, use_pairing_filter_, use_subgraph_reduction_);
-        TracePhase("validation", [&] {
-            auto const& graph = *graph_;
-            std::vector<gk_compact::VertexPair> violations;
-            if (key_) {
-                auto const roots = TracePhase("root_selection", [&] {
-                    std::vector<gk_compact::VertexId> selected;
-                    auto const type = key_->nodes[key_->root].type;
-                    for (auto entity : graph.EntityIds()) {
-                        if (graph.GetType(entity) == type) selected.push_back(entity);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        bool const validation_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+        auto const validation_started = validation_trace ? std::chrono::steady_clock::now()
+                                                         : std::chrono::steady_clock::time_point{};
+#endif
+        auto const& graph = *graph_;
+        std::vector<gk::EntityPair> violations;
+        if (key_) {
+            std::vector<gk_compact::VertexId> roots;
+            auto const type = key_->nodes[key_->root].type;
+            for (auto entity : graph.EntityIds())
+                if (graph.GetType(entity) == type) roots.push_back(entity);
+            if (roots.size() > 1) {
+                std::optional<gk_compact::Neighborhoods> neighborhoods;
+                if (use_localization_)
+                    neighborhoods.emplace(gk_compact::PrepareNeighborhoods(graph, roots, *key_));
+                gk_compact::EquivalenceRelation const eq0(graph.Metadata().GetEntityCount());
+                gk_compact::EvalGK evaluator(*key_);
+                for (std::size_t first = 0; first + 1 < roots.size(); ++first) {
+                    auto const first_graph =
+                            neighborhoods ? (*neighborhoods)[first] : gk_compact::GraphView(graph);
+                    for (std::size_t second = first + 1; second < roots.size(); ++second) {
+                        auto const second_graph = neighborhoods ? (*neighborhoods)[second]
+                                                                : gk_compact::GraphView(graph);
+                        if (gk_compact::EvaluatePair(
+                                    evaluator, *key_,
+                                    {first_graph, second_graph, roots[first], roots[second]}, eq0,
+                                    use_pairing_filter_, use_subgraph_reduction_))
+                            violations.emplace_back(graph.GetLabel(roots[first]),
+                                                    graph.GetLabel(roots[second]));
                     }
-                    return selected;
-                });
-                if (roots.size() > 1) {
-                    std::optional<gk_compact::Neighborhoods> neighborhoods;
-                    if (use_localization_)
-                        neighborhoods.emplace(
-                                gk_compact::PrepareNeighborhoods(graph, roots, *key_));
-                    gk_compact::EquivalenceRelation const eq0(graph.Metadata().GetEntityCount());
-                    gk_compact::EvalGK evaluator(*key_);
-                    TracePhase("pair_checks", [&] {
-                        for (std::size_t first = 0; first + 1 < roots.size(); ++first) {
-                            auto const first_graph = neighborhoods ? (*neighborhoods)[first]
-                                                                   : gk_compact::GraphView(graph);
-                            for (std::size_t second = first + 1; second < roots.size(); ++second) {
-                                auto const second_graph = neighborhoods
-                                                                  ? (*neighborhoods)[second]
-                                                                  : gk_compact::GraphView(graph);
-                                if (gk_compact::EvaluatePair(evaluator, *key_,
-                                                             {first_graph, second_graph,
-                                                              roots[first], roots[second]},
-                                                             eq0, use_pairing_filter_,
-                                                             use_subgraph_reduction_))
-                                    violations.emplace_back(roots[first], roots[second]);
-                            }
-                        }
-                    });
                 }
             }
-            result_ = TracePhase("result_decode", [&] { return Decode(graph, violations); });
-        });
+        }
+        bool const holds = violations.empty();
+        result_ = gk::ValidationResult{holds, std::move(violations)};
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        if (validation_trace)
+            LOG_TRACE("Compact GK phase 'validation': {} ns",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - validation_started)
+                              .count());
+#endif
         LOG_INFO("Compact GK validation finished: {} violations", result_->violations.size());
     } catch (...) {
         result_.reset();

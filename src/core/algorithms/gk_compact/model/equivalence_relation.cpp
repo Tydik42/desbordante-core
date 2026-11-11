@@ -1,4 +1,4 @@
-#include "core/algorithms/gk_compact/equivalence_relation.h"
+#include "core/algorithms/gk_compact/model/equivalence_relation.h"
 
 #include <limits>
 #include <numeric>

@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/algorithms/gk/model/key.h"
+#include "core/algorithms/gk/model/graph.h"
 #include "core/algorithms/gk_compact/model/graph_metadata.h"
 
 namespace gk_compact {

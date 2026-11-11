@@ -467,6 +467,7 @@ class TestGkBindings(unittest.TestCase):
                                 "unrelated", gk.Node(gk.NodeKind.VALUE, "other")))
         graph = gk.CompactGraph.from_triples(iter(source))
         validator = gk.algorithms.CompactGkValidator()
+        self.assertFalse(hasattr(validator, "timing_stats"))
         with self.assertRaises(RuntimeError):
             _ = validator.holds
         validator.load_data(gk_graph=graph, gk_key=key)

@@ -2,9 +2,9 @@
 
 #include <cstddef>
 
-#include "core/algorithms/gk_compact/equivalence_relation.h"
-#include "core/algorithms/gk_compact/joint_mapping.h"
+#include "core/algorithms/gk_compact/model/equivalence_relation.h"
 #include "core/algorithms/gk_compact/model/graph_view.h"
+#include "core/algorithms/gk_compact/model/joint_mapping.h"
 #include "core/algorithms/gk_compact/model/key.h"
 
 namespace gk_compact {
