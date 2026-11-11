@@ -15,7 +15,7 @@
 #include "core/algorithms/dd/dd.h"
 #include "core/algorithms/fd/tane/enums.h"
 #include "core/algorithms/gdd/gdd.h"
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/key.h"
 #include "core/algorithms/md/hymd/enums.h"
 #include "core/algorithms/metric/enums.h"
 #include "core/algorithms/nar/des/enums.h"

@@ -5,7 +5,7 @@
 #include <unordered_set>
 #include <utility>
 
-#include "core/algorithms/gk/validation.h"
+#include "core/algorithms/gk/model/validation.h"
 
 namespace gk {
 namespace {

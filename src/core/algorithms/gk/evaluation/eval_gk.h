@@ -2,8 +2,9 @@
 
 #include <cstddef>
 
-#include "core/algorithms/gk/equivalence_relation.h"
-#include "core/algorithms/gk/joint_mapping.h"
+#include "core/algorithms/gk/model/equivalence_relation.h"
+#include "core/algorithms/gk/model/graph_view.h"
+#include "core/algorithms/gk/model/joint_mapping.h"
 #include "core/algorithms/gk/model/key.h"
 
 namespace gk {
@@ -11,8 +12,8 @@ namespace gk {
 struct EvalGKInput {
     // Graphs and roots borrow caller-owned storage for the duration of Evaluate.
     // Both roots must have the designated variable's type.
-    model::Graph const& first_graph;
-    model::Graph const& second_graph;
+    GraphView first_graph;
+    GraphView second_graph;
     model::Node const& first_root;
     model::Node const& second_root;
 };
@@ -34,10 +35,9 @@ private:
     CompiledKey key_;
     JointMapping m_;
 
-    bool SearchStep(std::size_t step, EvalGKInput const& input, JointMapping& m,
-                    EquivalenceRelation const& eq) const;
+    bool SearchStep(std::size_t step, EvalGKInput const& input, EquivalenceRelation const& eq);
     bool IsFeasible(model::Variable const& u, model::Node const& v1, model::Node const& v2,
-                    JointMapping const& m, EquivalenceRelation const& eq) const;
+                    EquivalenceRelation const& eq) const;
 };
 
 }  // namespace gk

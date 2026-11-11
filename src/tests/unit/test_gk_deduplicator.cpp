@@ -15,7 +15,7 @@
 
 #include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 #include "core/algorithms/gk/gk_deduplicator/gk_deduplicator.h"
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/key.h"
 #include "core/config/exceptions.h"
 #include "core/config/names.h"
 
@@ -209,8 +209,7 @@ TEST(GkDeduplicatorTest, EmptyInputsAndMissingRootTypesProduceIdentity) {
     for (auto const& keys : {std::vector<GraphKey>{}, std::vector<GraphKey>{ValueKey("absent")}}) {
         auto const result = gk::ChaseEngine(keys).Run(graph);
         EXPECT_EQ(result.clusters, (Clusters{{"a"}, {"b"}}));
-        EXPECT_EQ(result.statistics.merge_count, 0U);
-        EXPECT_EQ(result.statistics.pass_count, 0U);
+        EXPECT_EQ(result.merge_count, 0U);
     }
     EXPECT_TRUE(gk::ChaseEngine({ValueKey()}).Run({}).clusters.empty());
 }
@@ -223,18 +222,14 @@ TEST(GkDeduplicatorTest, MergesTransitiveMatchesAndKeepsSingletons) {
                          {Entity("foreign", "Y"), "code", Value("first")}};
     auto const result = gk::ChaseEngine({ValueKey()}).Run(graph);
     EXPECT_EQ(result.clusters, (Clusters{{"a", "b", "c"}, {"foreign"}}));
-    EXPECT_EQ(result.statistics.merge_count, 2U);
-    EXPECT_EQ(result.statistics.entity_count, 4U);
-    EXPECT_EQ(result.statistics.merge_count,
-              result.statistics.entity_count - result.clusters.size());
+    EXPECT_EQ(result.merge_count, 2U);
+    EXPECT_EQ(result.merge_count, 4U - result.clusters.size());
 }
 
 TEST(GkDeduplicatorTest, RevisitsPairsAfterAnotherKeyChangesEquivalence) {
     auto const result = gk::ChaseEngine(DependentKeys()).Run(DependentGraph());
     EXPECT_EQ(result.clusters, (Clusters{{"a", "b"}, {"c1", "c2"}}));
-    EXPECT_EQ(result.statistics.merge_count, 2U);
-    EXPECT_GE(result.statistics.pass_count, 3U);
-    EXPECT_EQ(result.statistics.root_pair_count, 2U);
+    EXPECT_EQ(result.merge_count, 2U);
 }
 
 TEST(GkDeduplicatorTest, RecursiveKeyNeedsASeedAndRepeatedPasses) {
@@ -246,7 +241,6 @@ TEST(GkDeduplicatorTest, RecursiveKeyNeedsASeedAndRepeatedPasses) {
     gk::ChaseEngine const engine({EntityKey()});
     auto const result = engine.Run(seeded);
     EXPECT_EQ(result.clusters, (Clusters{{"a", "b"}, {"c", "d"}, {"z"}}));
-    EXPECT_GE(result.statistics.pass_count, 3U);
     Graph const unseeded = {{Entity("a"), "p", Entity("b")}, {Entity("b"), "p", Entity("a")}};
     EXPECT_EQ(engine.Run(unseeded).clusters, (Clusters{{"a"}, {"b"}}));
 }
@@ -299,8 +293,7 @@ TEST(GkDeduplicatorTest, OwnsKeysAndResetsEquivalenceBetweenExecutions) {
     EXPECT_EQ(engine.Run(graph).clusters, (Clusters{{"a"}, {"b"}, {"c1"}, {"c2"}}));
     auto const repeated = engine.Run(DependentGraph());
     EXPECT_EQ(repeated.clusters, first.clusters);
-    EXPECT_EQ(repeated.statistics.merge_count, first.statistics.merge_count);
-    EXPECT_EQ(repeated.statistics.eval_call_count, first.statistics.eval_call_count);
+    EXPECT_EQ(repeated.merge_count, first.merge_count);
 }
 
 TEST(GkDeduplicatorTest, OrderAndDuplicateFactsOrKeysDoNotChangePartition) {
@@ -339,13 +332,13 @@ TEST(GkDeduplicatorTest, MatchesIndependentEmbeddingEnumerationOnSmallGraphs) {
                 auto const result =
                         gk::ChaseEngine(keys).Run(graph, localization, pairing, reduction);
                 EXPECT_EQ(result.clusters, expected);
-                EXPECT_EQ(result.statistics.merge_count, 3U - result.clusters.size());
+                EXPECT_EQ(result.merge_count, 3U - result.clusters.size());
             }
         }
     }
 }
 
-TEST(GkDeduplicatorTest, AdapterRegistersOptionsAndResetsExecutionStatistics) {
+TEST(GkDeduplicatorTest, AdapterRegistersOptionsAndResetsResults) {
     using namespace config::names;
     algos::GkDeduplicator algorithm;
     EXPECT_THROW(algorithm.Execute(), std::logic_error);
@@ -361,18 +354,6 @@ TEST(GkDeduplicatorTest, AdapterRegistersOptionsAndResetsExecutionStatistics) {
         EXPECT_EQ(algorithm.GetClusters(), (Clusters{{"a", "b"}, {"c1", "c2"}}));
         EXPECT_EQ(algorithm.GetMergeCount(), 2U);
         EXPECT_EQ(algorithm.GetClusterCount(), 2U);
-        auto const& stats = algorithm.GetTimingStats();
-        EXPECT_EQ(stats.graph_triple_count, 4U);
-        EXPECT_EQ(stats.key_count, 2U);
-        EXPECT_EQ(stats.execution.entity_count, 4U);
-        EXPECT_EQ(stats.execution.merge_count, 2U);
-        EXPECT_EQ(stats.execution.root_pair_count, 2U);
-        EXPECT_GE(stats.execution.pass_count, 3U);
-        EXPECT_EQ(stats.load_source_ns, 0U);
-        EXPECT_GE(stats.load_total_ns, stats.load_graph_check_ns + stats.load_keys_check_ns);
-        EXPECT_GE(stats.execute_total_ns, stats.execution.total_ns);
-        EXPECT_GE(stats.execution.total_ns, stats.execution.prepare_ns + stats.execution.eval_ns +
-                                                    stats.execution.finalize_ns);
     }
 }
 
@@ -406,7 +387,6 @@ TEST(GkDeduplicatorTest, AdapterLoadsTheExistingCsvFormat) {
     algorithm.SetOption(kGkUseLocalization);
     algorithm.Execute();
     EXPECT_EQ(algorithm.GetClusters(), (Clusters{{"a,quoted", "b"}, {"c1", "c2"}}));
-    EXPECT_GT(algorithm.GetTimingStats().load_source_ns, 0U);
 }
 
 TEST(GkDeduplicatorTest, AdapterRejectsMissingAmbiguousAndInvalidInputs) {
@@ -449,7 +429,6 @@ TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndSwitchesOptimizations) {
         algorithm.Execute();
         EXPECT_EQ(algorithm.GetMergeCount(), 0U);
         EXPECT_EQ(algorithm.GetClusters(), ReferenceChase(graph, {}));
-        EXPECT_EQ(algorithm.GetTimingStats().execution.pass_count, 0U);
     }
     algos::GkDeduplicator algorithm;
     algorithm.SetOption(kGkGraphData, DependentGraph());
@@ -460,15 +439,6 @@ TEST(GkDeduplicatorTest, AdapterHandlesIdentityAndSwitchesOptimizations) {
         algorithm.Execute();
         EXPECT_EQ(algorithm.GetClusters(), ReferenceChase(DependentGraph(), DependentKeys()));
         EXPECT_EQ(algorithm.GetMergeCount(), 2U);
-        auto const& stats = algorithm.GetTimingStats().execution;
-        if (pairing) {
-            EXPECT_EQ(stats.evaluation.pairing_check_count, stats.eval_call_count);
-            // a/b must not be permanently filtered before c1/c2 become equivalent.
-            EXPECT_EQ(stats.evaluation.filtered_pair_count, 0U);
-            EXPECT_GT(stats.evaluation.search_call_count, 0U);
-        } else {
-            EXPECT_EQ(stats.evaluation.pairing_check_count, 0U);
-        }
     }
     algorithm.SetOption(kGkUseLocalization, false);
     algorithm.Execute();

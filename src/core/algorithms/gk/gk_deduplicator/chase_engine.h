@@ -1,55 +1,27 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
-#include <string>
 #include <vector>
 
-#include "core/algorithms/gk/equivalence_relation.h"
-#include "core/algorithms/gk/evaluation/eval_gk.h"
-#include "core/algorithms/gk/evaluation_statistics.h"
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/equivalence_relation.h"
+#include "core/algorithms/gk/model/key.h"
 
 namespace gk {
 
-struct ChaseStatistics {
-    std::uint64_t prepare_ns = 0;
-    std::uint64_t eval_ns = 0;
-    std::uint64_t finalize_ns = 0;
-    std::uint64_t total_ns = 0;
-    std::size_t entity_count = 0;
-    std::size_t root_pair_count = 0;     // Potential pairs in one pass, not a materialized list.
-    std::size_t checked_pair_count = 0;  // Non-equivalent pairs visited across all passes.
-    std::size_t eval_call_count = 0;
+struct ChaseRunResult {
+    EquivalenceRelation::Classes clusters;
     std::size_t merge_count = 0;
-    std::size_t pass_count = 0;  // Includes the final pass without merges, if any.
-    EvaluationStatistics evaluation;
-};
-
-struct ChaseResult {
-    EquivalenceRelation::Classes clusters;  // Includes singleton entity classes, never values.
-    ChaseStatistics statistics;
 };
 
 class ChaseEngine {
 public:
-    // Validate and own keys. No reference to the caller's key container is retained.
     explicit ChaseEngine(std::vector<model::GraphKey> const& keys);
-
-    // The graph must have passed CheckGraph. Every call starts from Eq_0 and leaves the
-    // original graph intact; this object can be reused for independent executions.
-    // Stages form a prefix: none, localization, +pairing, +reduction. Neighborhoods
-    // are prepared once per root/key and reused across all fixed-point passes.
-    ChaseResult Run(model::Graph const& graph, bool use_localization = false,
-                    bool use_pairing_filter = false, bool use_subgraph_reduction = false) const;
+    // Validated graph; original vertices are never rewritten. Starts from Eq_0.
+    ChaseRunResult Run(model::Graph const& graph, bool use_localization = false,
+                       bool use_pairing_filter = false, bool use_subgraph_reduction = false) const;
 
 private:
-    struct Rule {
-        model::TypeId root_type;
-        CompiledKey key;
-    };
-
-    std::vector<Rule> rules_;
+    std::vector<CompiledKey> keys_;
 };
 
 }  // namespace gk

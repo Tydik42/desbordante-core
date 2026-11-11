@@ -18,7 +18,7 @@
 
 #include "core/algorithms/gk/gk_deduplicator/gk_deduplicator.h"
 #include "core/algorithms/gk/gk_validator/gk_validator.h"
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/key.h"
 #include "core/config/exceptions.h"
 #include "core/config/names.h"
 #include "python_bindings/bind_main_classes.h"
@@ -338,71 +338,18 @@ void BindGk(pybind11::module_& main_module) {
                  })
             .def(py::pickle(&SerializeGraphKey, &DeserializeGraphKey));
 
-    py::class_<gk::EvaluationStatistics>(gk_module, "EvaluationStatistics")
-            .def_readonly("neighborhood_ns", &gk::EvaluationStatistics::neighborhood_ns)
-            .def_readonly("pairing_ns", &gk::EvaluationStatistics::pairing_ns)
-            .def_readonly("reduction_ns", &gk::EvaluationStatistics::reduction_ns)
-            .def_readonly("search_ns", &gk::EvaluationStatistics::search_ns)
-            .def_readonly("pairing_check_count", &gk::EvaluationStatistics::pairing_check_count)
-            .def_readonly("filtered_pair_count", &gk::EvaluationStatistics::filtered_pair_count)
-            .def_readonly("search_call_count", &gk::EvaluationStatistics::search_call_count)
-            .def_readonly("neighborhood_triple_count",
-                          &gk::EvaluationStatistics::neighborhood_triple_count)
-            .def_readonly("reduced_triple_count", &gk::EvaluationStatistics::reduced_triple_count);
-
-    py::class_<gk::ValidationTimingStats>(gk_module, "ValidationTimingStats")
-            .def_readonly("load_source_ns", &gk::ValidationTimingStats::load_source_ns)
-            .def_readonly("load_graph_check_ns", &gk::ValidationTimingStats::load_graph_check_ns)
-            .def_readonly("load_key_check_ns", &gk::ValidationTimingStats::load_key_check_ns)
-            .def_readonly("load_total_ns", &gk::ValidationTimingStats::load_total_ns)
-            .def_readonly("execute_prepare_ns", &gk::ValidationTimingStats::execute_prepare_ns)
-            .def_readonly("execute_eval_ns", &gk::ValidationTimingStats::execute_eval_ns)
-            .def_readonly("execute_finalize_ns", &gk::ValidationTimingStats::execute_finalize_ns)
-            .def_readonly("execute_total_ns", &gk::ValidationTimingStats::execute_total_ns)
-            .def_readonly("graph_triple_count", &gk::ValidationTimingStats::graph_triple_count)
-            .def_readonly("graph_entity_count", &gk::ValidationTimingStats::graph_entity_count)
-            .def_readonly("root_candidate_count", &gk::ValidationTimingStats::root_candidate_count)
-            .def_readonly("root_pair_count", &gk::ValidationTimingStats::root_pair_count)
-            .def_readonly("checked_pair_count", &gk::ValidationTimingStats::checked_pair_count)
-            .def_readonly("violation_count", &gk::ValidationTimingStats::violation_count)
-            .def_readonly("evaluation", &gk::ValidationTimingStats::evaluation);
-
     auto validator = BindPrimitiveNoBase<algos::GkValidator>(gk_module, "GkValidator");
     BindExecution<algos::GkValidator>(validator);
     validator.def_property_readonly("holds", &algos::GkValidator::Holds)
             .def("get_violations",
-                 [](algos::GkValidator const& validator) { return validator.GetViolations(); })
-            .def_property_readonly("timing_stats", [](algos::GkValidator const& validator) {
-                return validator.GetTimingStats();
-            });
+                 [](algos::GkValidator const& validator) { return validator.GetViolations(); });
 
     auto dedup_module = main_module.def_submodule("gk_deduplication");
     // Both algorithms accept the exact same descriptors, not separately registered copies.
-    for (auto const* name : {"NodeKind", "VarKind", "Node", "Variable", "Triple", "PatternTriple",
-                             "GraphKey", "EvaluationStatistics"}) {
+    for (auto const* name :
+         {"NodeKind", "VarKind", "Node", "Variable", "Triple", "PatternTriple", "GraphKey"}) {
         dedup_module.attr(name) = gk_module.attr(name);
     }
-    py::class_<gk::ChaseStatistics>(dedup_module, "ChaseStatistics")
-            .def_readonly("prepare_ns", &gk::ChaseStatistics::prepare_ns)
-            .def_readonly("eval_ns", &gk::ChaseStatistics::eval_ns)
-            .def_readonly("finalize_ns", &gk::ChaseStatistics::finalize_ns)
-            .def_readonly("total_ns", &gk::ChaseStatistics::total_ns)
-            .def_readonly("entity_count", &gk::ChaseStatistics::entity_count)
-            .def_readonly("root_pair_count", &gk::ChaseStatistics::root_pair_count)
-            .def_readonly("checked_pair_count", &gk::ChaseStatistics::checked_pair_count)
-            .def_readonly("eval_call_count", &gk::ChaseStatistics::eval_call_count)
-            .def_readonly("merge_count", &gk::ChaseStatistics::merge_count)
-            .def_readonly("pass_count", &gk::ChaseStatistics::pass_count)
-            .def_readonly("evaluation", &gk::ChaseStatistics::evaluation);
-    py::class_<gk::DeduplicationTimingStats>(dedup_module, "DeduplicationTimingStats")
-            .def_readonly("load_source_ns", &gk::DeduplicationTimingStats::load_source_ns)
-            .def_readonly("load_graph_check_ns", &gk::DeduplicationTimingStats::load_graph_check_ns)
-            .def_readonly("load_keys_check_ns", &gk::DeduplicationTimingStats::load_keys_check_ns)
-            .def_readonly("load_total_ns", &gk::DeduplicationTimingStats::load_total_ns)
-            .def_readonly("execute_total_ns", &gk::DeduplicationTimingStats::execute_total_ns)
-            .def_readonly("graph_triple_count", &gk::DeduplicationTimingStats::graph_triple_count)
-            .def_readonly("key_count", &gk::DeduplicationTimingStats::key_count)
-            .def_readonly("execution", &gk::DeduplicationTimingStats::execution);
     auto deduplicator = BindPrimitiveNoBase<algos::GkDeduplicator>(dedup_module, "GkDeduplicator");
     BindExecution<algos::GkDeduplicator>(deduplicator);
     deduplicator
@@ -411,10 +358,7 @@ void BindGk(pybind11::module_& main_module) {
                      return deduplicator.GetClusters();
                  })
             .def_property_readonly("cluster_count", &algos::GkDeduplicator::GetClusterCount)
-            .def_property_readonly("merge_count", &algos::GkDeduplicator::GetMergeCount)
-            .def_property_readonly("timing_stats", [](algos::GkDeduplicator const& deduplicator) {
-                return deduplicator.GetTimingStats();
-            });
+            .def_property_readonly("merge_count", &algos::GkDeduplicator::GetMergeCount);
 }
 
 }  // namespace python_bindings

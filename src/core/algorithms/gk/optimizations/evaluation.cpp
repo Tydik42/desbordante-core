@@ -1,60 +1,99 @@
 #include "core/algorithms/gk/optimizations/evaluation.h"
 
 #include <cassert>
-#include <chrono>
 #include <optional>
 
+#include "core/algorithms/gk/optimizations/pairing_filter.h"
+#include "core/algorithms/gk/optimizations/subgraph_reduction.h"
 #include "core/util/logger.h"
 
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
+
 namespace gk {
-namespace {
 
-std::uint64_t Elapsed(std::chrono::steady_clock::time_point started) {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                              std::chrono::steady_clock::now() - started)
-                                              .count());
-}
-
-}  // namespace
-
-Neighborhoods PrepareNeighborhoods(model::Graph const& graph,
+Neighborhoods PrepareNeighborhoods(model::Graph const& input,
                                    std::span<model::Node const* const> roots,
-                                   model::GraphKey const& key, EvaluationStatistics& statistics) {
-    auto const started = std::chrono::steady_clock::now();
-    Neighborhoods result(graph, roots, GetPatternRadius(key));
-    statistics.neighborhood_ns += Elapsed(started);
-    for (std::size_t i = 0; i < result.size(); ++i)
-        statistics.neighborhood_triple_count += result[i].size();
-    LOG_TRACE("GK localization: {} roots, {} stored triples, {} ns", roots.size(),
-              statistics.neighborhood_triple_count, statistics.neighborhood_ns);
+                                   CompiledKey const& key) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const localization_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const localization_started = localization_trace ? std::chrono::steady_clock::now()
+                                                         : std::chrono::steady_clock::time_point{};
+#endif
+    Neighborhoods result(input, roots, GetPatternRadius(key));
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (localization_trace)
+        LOG_TRACE("GK phase 'localization': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - localization_started)
+                          .count());
+#endif
     return result;
 }
 
-bool EvaluatePair(EvalGK& evaluator, EvalGKInput const& input, EquivalenceRelation const& eq,
-                  PairingFilter const* filter, bool reduce, EvaluationStatistics* statistics) {
-    assert(!reduce || filter);
-    EvaluationStatistics local;
-    auto& stats = statistics ? *statistics : local;
-    std::optional<PairingResult> prepared;
-    auto const* first = &input.first_graph;
-    auto const* second = &input.second_graph;
-    if (filter) {
-        prepared = filter->Prepare(*first, *second, input.first_root, input.second_root, reduce,
-                                   stats);
-        if (!prepared->pairable) return false;
-        if (reduce) {
-            first = &prepared->first_graph;
-            second = &prepared->second_graph;
+bool EvaluatePair(EvalGK& evaluator, CompiledKey const& key, EvalGKInput const& input,
+                  EquivalenceRelation const& eq, bool use_pairing_filter,
+                  bool use_subgraph_reduction) {
+    assert(!use_subgraph_reduction || use_pairing_filter);
+    auto first_graph = input.first_graph;
+    auto second_graph = input.second_graph;
+    std::optional<model::Graph> first_reduced, second_reduced;
+    if (use_pairing_filter) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        bool const pairing_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+        auto const pairing_started = pairing_trace ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
+#endif
+        auto const pairing = ComputePairing(key, first_graph, second_graph);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        if (pairing_trace)
+            LOG_TRACE("GK phase 'pairing': {} ns",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - pairing_started)
+                              .count());
+#endif
+        if (!pairing.Contains(key.descriptor.root_x, input.first_root, input.second_root)) {
+            LOG_TRACE("GK pairing rejected roots ('{}', '{}')", input.first_root.id_or_val,
+                      input.second_root.id_or_val);
+            return false;
+        }
+        if (use_subgraph_reduction) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+            bool const reduction_trace =
+                    util::logging::Initialize()->should_log(spdlog::level::trace);
+            auto const reduction_started = reduction_trace
+                                                   ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
+#endif
+            first_reduced.emplace(ReduceSubgraph(first_graph, pairing, PairingProjection::kFirst));
+            second_reduced.emplace(
+                    ReduceSubgraph(second_graph, pairing, PairingProjection::kSecond));
+            first_graph = GraphView(*first_reduced);
+            second_graph = GraphView(*second_reduced);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+            if (reduction_trace)
+                LOG_TRACE("GK phase 'reduction': {} ns",
+                          std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  std::chrono::steady_clock::now() - reduction_started)
+                                  .count());
+#endif
         }
     }
-    auto const started = std::chrono::steady_clock::now();
-    ++stats.search_call_count;
-    bool const result =
-            evaluator.Evaluate({*first, *second, input.first_root, input.second_root}, eq);
-    auto const elapsed = Elapsed(started);
-    stats.search_ns += elapsed;
-    LOG_TRACE("GK exact search: roots ('{}', '{}'), result={}, {} ns", input.first_root.id_or_val,
-              input.second_root.id_or_val, result, elapsed);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const search_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const search_started = search_trace ? std::chrono::steady_clock::now()
+                                             : std::chrono::steady_clock::time_point{};
+#endif
+    bool const result = evaluator.Evaluate(
+            {first_graph, second_graph, input.first_root, input.second_root}, eq);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (search_trace)
+        LOG_TRACE("GK phase 'exact_search': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - search_started)
+                          .count());
+#endif
     return result;
 }
 

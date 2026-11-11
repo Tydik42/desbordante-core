@@ -4,7 +4,7 @@
 #include <istream>
 #include <string>
 
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/key.h"
 
 namespace gk::parser::detail {
 

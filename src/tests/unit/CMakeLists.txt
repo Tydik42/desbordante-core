@@ -462,6 +462,7 @@ desbordante_add_test(
     ${DESBORDANTE_PREFIX}::gk::validator
     ${DESBORDANTE_PREFIX}::algos
     ${DESBORDANTE_PREFIX}::config
+    spdlog::spdlog_header_only
     Boost::headers
 )
 

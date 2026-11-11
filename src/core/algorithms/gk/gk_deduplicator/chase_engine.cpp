@@ -1,127 +1,114 @@
 #include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 
-#include <chrono>
 #include <map>
 #include <optional>
 #include <utility>
 
+#include "core/algorithms/gk/evaluation/eval_gk.h"
+#include "core/algorithms/gk/model/validation.h"
 #include "core/algorithms/gk/optimizations/evaluation.h"
-#include "core/algorithms/gk/validation.h"
 #include "core/config/gk/option.h"
 #include "core/util/logger.h"
+
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
 
 namespace gk {
 namespace {
 
-std::uint64_t ElapsedNanoseconds(std::chrono::steady_clock::time_point started_at) {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                              std::chrono::steady_clock::now() - started_at)
-                                              .count());
-}
-
 struct RootGroup {
     std::vector<model::Node const*> entities;
-    std::vector<std::size_t> rules;
+    std::vector<std::size_t> keys;
 };
 
 }  // namespace
 
 ChaseEngine::ChaseEngine(std::vector<model::GraphKey> const& keys) {
-    rules_.reserve(keys.size());
-    for (auto const& key : keys) {
-        auto compiled = CompileKey(key);
-        rules_.push_back({key.T_Q.at(key.root_x), std::move(compiled)});
-    }
-    LOG_DEBUG("Prepared ChaseEngine with {} graph keys", rules_.size());
+    keys_.reserve(keys.size());
+    for (auto const& key : keys) keys_.push_back(CompileKey(key));
 }
 
-ChaseResult ChaseEngine::Run(model::Graph const& graph, bool use_localization,
-                             bool use_pairing_filter, bool use_subgraph_reduction) const {
+ChaseRunResult ChaseEngine::Run(model::Graph const& graph, bool use_localization,
+                                bool use_pairing_filter, bool use_subgraph_reduction) const {
     config::CheckGkOptimizationDependencies(use_localization, use_pairing_filter,
                                             use_subgraph_reduction);
-    auto const started_at = std::chrono::steady_clock::now();
-    ChaseResult result;
-    auto& stats = result.statistics;
-    std::vector<model::Node> const entities = CollectEntities(graph);
-    stats.entity_count = entities.size();
-
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const chase_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const chase_started = chase_trace ? std::chrono::steady_clock::now()
+                                           : std::chrono::steady_clock::time_point{};
+#endif
+    ChaseRunResult result;
+    auto const entities = CollectEntities(graph);
     EquivalenceRelation eq;
     std::map<model::TypeId, RootGroup> groups;
     std::vector<EvalGK> evaluators;
-    evaluators.reserve(rules_.size());
-    for (std::size_t i = 0; i < rules_.size(); ++i) {
-        evaluators.emplace_back(rules_[i].key);
-        groups[rules_[i].root_type].rules.push_back(i);
+    evaluators.reserve(keys_.size());
+    for (std::size_t i = 0; i < keys_.size(); ++i) {
+        evaluators.emplace_back(keys_[i]);
+        auto const& descriptor = keys_[i].descriptor;
+        groups[descriptor.T_Q.at(descriptor.root_x)].keys.push_back(i);
     }
     for (auto const& entity : entities) {
         eq.AddEntity(entity.id_or_val);
         auto const group = groups.find(entity.type);
         if (group != groups.end()) group->second.entities.push_back(&entity);
     }
-    for (auto const& [type, group] : groups) {
-        std::size_t const count = group.entities.size();
-        if (count > 1) stats.root_pair_count += count * (count - 1) / 2;
+    bool has_pairs = false;
+    for (auto const& [type, group] : groups) has_pairs |= group.entities.size() > 1;
+    std::vector<std::optional<Neighborhoods>> neighborhoods(keys_.size());
+    if (use_localization) {
+        for (std::size_t i = 0; i < keys_.size(); ++i) {
+            auto const& descriptor = keys_[i].descriptor;
+            auto const& roots = groups.at(descriptor.T_Q.at(descriptor.root_x)).entities;
+            if (roots.size() > 1)
+                neighborhoods[i].emplace(PrepareNeighborhoods(graph, roots, keys_[i]));
+        }
     }
-    std::vector<std::optional<Neighborhoods>> neighborhoods(rules_.size());
-    std::vector<std::optional<PairingFilter>> filters(rules_.size());
-    for (std::size_t i = 0; i < rules_.size(); ++i) {
-        auto const& rule = rules_[i];
-        auto const& roots = groups.at(rule.root_type).entities;
-        if (use_localization && roots.size() > 1)
-            neighborhoods[i].emplace(
-                    PrepareNeighborhoods(graph, roots, rule.key.descriptor, stats.evaluation));
-        if (use_pairing_filter) filters[i].emplace(rule.key.descriptor);
-    }
-    stats.prepare_ns = ElapsedNanoseconds(started_at);
-
-    auto const eval_started_at = std::chrono::steady_clock::now();
-    if (stats.root_pair_count != 0) {
+    std::size_t pass_count = 0;
+    if (has_pairs) {
         bool changed;
         do {
             changed = false;
-            ++stats.pass_count;
-            std::size_t const merges_before = stats.merge_count;
+            ++pass_count;
+            auto const merges_before = result.merge_count;
             for (auto const& [type, group] : groups) {
-                for (std::size_t first = 0; first < group.entities.size(); ++first) {
+                for (std::size_t first = 0; first + 1 < group.entities.size(); ++first) {
                     auto const& lhs = *group.entities[first];
                     for (std::size_t second = first + 1; second < group.entities.size(); ++second) {
                         auto const& rhs = *group.entities[second];
                         if (eq.AreEquivalent(lhs.id_or_val, rhs.id_or_val)) continue;
-                        ++stats.checked_pair_count;
-                        for (auto rule : group.rules) {
-                            ++stats.eval_call_count;
-                            auto const& left =
-                                    neighborhoods[rule] ? (*neighborhoods[rule])[first] : graph;
-                            auto const& right =
-                                    neighborhoods[rule] ? (*neighborhoods[rule])[second] : graph;
-                            if (!EvaluatePair(evaluators[rule], {left, right, lhs, rhs}, eq,
-                                              filters[rule] ? &*filters[rule] : nullptr,
-                                              use_subgraph_reduction, &stats.evaluation))
+                        for (auto key : group.keys) {
+                            auto const left = neighborhoods[key] ? (*neighborhoods[key])[first]
+                                                                 : GraphView(graph);
+                            auto const right = neighborhoods[key] ? (*neighborhoods[key])[second]
+                                                                  : GraphView(graph);
+                            if (!EvaluatePair(evaluators[key], keys_[key], {left, right, lhs, rhs},
+                                              eq, use_pairing_filter, use_subgraph_reduction))
                                 continue;
                             if (eq.Merge(lhs.id_or_val, rhs.id_or_val)) {
-                                ++stats.merge_count;
+                                ++result.merge_count;
                                 changed = true;
-                                LOG_TRACE("Chase merged entities '{}' and '{}' in pass {}",
-                                          lhs.id_or_val, rhs.id_or_val, stats.pass_count);
+                                LOG_TRACE("GK Chase merged '{}' and '{}' in pass {}", lhs.id_or_val,
+                                          rhs.id_or_val, pass_count);
                             }
                             break;
                         }
                     }
                 }
             }
-            LOG_DEBUG("Chase pass {}: {} new merges, {} classes remain", stats.pass_count,
-                      stats.merge_count - merges_before, eq.GetClassCount());
+            LOG_DEBUG("GK Chase pass {}: {} new merges, {} classes remain", pass_count,
+                      result.merge_count - merges_before, eq.GetClassCount());
         } while (changed);
     }
-    stats.eval_ns = ElapsedNanoseconds(eval_started_at);
-
-    auto const finalize_started_at = std::chrono::steady_clock::now();
     result.clusters = eq.GetClasses();
-    stats.finalize_ns = ElapsedNanoseconds(finalize_started_at);
-    stats.total_ns = ElapsedNanoseconds(started_at);
-    LOG_DEBUG("Chase finished: {} entities, {} classes, {} merges, {} passes, elapsed={} ns",
-              stats.entity_count, result.clusters.size(), stats.merge_count, stats.pass_count,
-              stats.total_ns);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (chase_trace)
+        LOG_TRACE("GK phase 'chase': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - chase_started)
+                          .count());
+#endif
     return result;
 }
 

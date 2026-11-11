@@ -6,6 +6,8 @@ Thus merging c1/c2 enables merging a/b on a later Chase pass.
 No vertices or triples in the input graph are rewritten.
 """
 
+from time import perf_counter_ns
+
 import desbordante
 
 
@@ -38,16 +40,13 @@ def main():
     algorithm = gk.algorithms.GkDeduplicator()
     algorithm.load_data(gk_graph=graph, gk_keys=keys)
     # A file can be loaded instead with gk_graph_path="graph.csv", gk_keys=keys.
+    started = perf_counter_ns()
     algorithm.execute(use_localization=True, use_pairing_filter=True,
                       use_subgraph_reduction=True)
+    elapsed_ns = perf_counter_ns() - started
     print("Entity classes:", algorithm.get_clusters())
     print("Successful merges:", algorithm.merge_count)
-    stats = algorithm.timing_stats
-    print("Chase passes:", stats.execution.pass_count)
-    print("Load time (ms):", stats.load_total_ns / 1_000_000)
-    print("Execute time (ms):", stats.execute_total_ns / 1_000_000)
-    print("Filtered pair/key checks:", stats.execution.evaluation.filtered_pair_count)
-    print("Exact search time (ms):", stats.execution.evaluation.search_ns / 1_000_000)
+    print("Execute wall time (ms):", elapsed_ns / 1_000_000)
     assert algorithm.get_clusters() == [["a", "b"], ["c1", "c2"]]
 
 

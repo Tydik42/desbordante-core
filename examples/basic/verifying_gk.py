@@ -6,6 +6,7 @@ GK PoC does not expose a GraphKey file parser yet.
 """
 
 from pathlib import Path
+from time import perf_counter_ns
 
 import desbordante
 
@@ -45,15 +46,15 @@ def check_graph_from_file() -> None:
     validator = gk.algorithms.GkValidator()
     validator.load_data(gk_graph_path=GRAPH_FILE, gk_key=key)
     # Each optional stage requires the preceding one; all default to False.
+    started = perf_counter_ns()
     validator.execute(use_localization=True, use_pairing_filter=True,
                       use_subgraph_reduction=True)
+    elapsed_ns = perf_counter_ns() - started
 
     print(f"File graph: holds={validator.holds}, violations={validator.get_violations()}")
     assert not validator.holds
     assert validator.get_violations() == [("a", "b")]
-    stats = validator.timing_stats.evaluation
-    print(f"Pairing checks: {stats.pairing_check_count}, filtered: {stats.filtered_pair_count}")
-    print(f"Exact search time (ms): {stats.search_ns / 1_000_000:.3f}")
+    print(f"Execute wall time (ms): {elapsed_ns / 1_000_000:.3f}")
 
 
 def check_graph_created_in_memory() -> None:

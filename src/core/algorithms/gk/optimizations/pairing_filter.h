@@ -1,38 +1,31 @@
 #pragma once
 
-#include <cstddef>
-#include <utility>
+#include <algorithm>
+#include <span>
+#include <unordered_map>
 #include <vector>
 
-#include "core/algorithms/gk/evaluation_statistics.h"
-#include "core/algorithms/gk/graph_descriptor.h"
+#include "core/algorithms/gk/model/graph_view.h"
+#include "core/algorithms/gk/model/key.h"
 
 namespace gk {
 
-struct PairingResult {
-    bool pairable = false;
-    // Populated only for pairable roots when reduction was requested. Own their data;
-    // no references to temporary neighborhoods are retained by EvalGK.
-    model::Graph first_graph;
-    model::Graph second_graph;
+struct PairingRelation {
+    std::unordered_map<model::Variable, std::vector<VertexPair>> pairs;
+
+    std::span<VertexPair const> Candidates(model::Variable const& node) const {
+        auto const found = pairs.find(node);
+        return found == pairs.end() ? std::span<VertexPair const>{} : found->second;
+    }
+
+    bool Contains(model::Variable const& node, model::Node const& first,
+                  model::Node const& second) const {
+        auto candidates = Candidates(node);
+        return std::ranges::find(candidates, VertexPair{first, second}) != candidates.end();
+    }
 };
 
-// Proposition 9 / Section 4.2 of Keys for Graphs. This is a necessary-condition
-// filter, not an embedding search: it deliberately ignores Eq and injectivity.
-class PairingFilter {
-public:
-    // The descriptor has already passed CheckKey. Inputs to Prepare are ready graphs.
-    explicit PairingFilter(model::GraphKey key);
-
-    PairingResult Prepare(model::Graph const& first_graph, model::Graph const& second_graph,
-                          model::Node const& first_root, model::Node const& second_root,
-                          bool reduce, EvaluationStatistics& statistics) const;
-
-private:
-    model::GraphKey key_;
-    std::vector<model::Variable> variables_;
-    std::vector<std::pair<std::size_t, std::size_t>> endpoints_;
-    std::size_t root_index_ = 0;
-};
+// Greatest structural-support relation; independent of Eq and injectivity.
+PairingRelation ComputePairing(CompiledKey const& key, GraphView first, GraphView second);
 
 }  // namespace gk

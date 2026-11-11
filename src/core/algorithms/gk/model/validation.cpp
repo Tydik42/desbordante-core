@@ -1,4 +1,4 @@
-#include "core/algorithms/gk/validation.h"
+#include "core/algorithms/gk/model/validation.h"
 
 #include <algorithm>
 #include <deque>
@@ -10,6 +10,10 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "core/util/logger.h"
+
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
 
 namespace gk {
 namespace {
@@ -120,6 +124,12 @@ void CheckTriple(model::Triple const& triple, std::size_t index) {
 }
 
 void CheckGraph(model::Graph const& graph) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const graph_check_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const graph_check_started = graph_check_trace ? std::chrono::steady_clock::now()
+                                                       : std::chrono::steady_clock::time_point{};
+#endif
+
     LOG_DEBUG("Validating GK graph descriptor: {} triples", graph.size());
 
     std::unordered_map<std::string, std::string> entity_types;
@@ -139,9 +149,22 @@ void CheckGraph(model::Graph const& graph) {
 
     LOG_DEBUG("GK graph descriptor is valid: {} distinct entities, {} value nodes",
               entity_types.size(), value_nodes);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (graph_check_trace)
+        LOG_TRACE("GK phase 'graph_validation': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - graph_check_started)
+                          .count());
+#endif
 }
 
 void CheckKey(model::GraphKey const& key) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const key_check_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const key_check_started = key_check_trace ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
+#endif
+
     LOG_DEBUG("Validating GK key descriptor: {} pattern triples, {} type entries, root='{}'",
               key.Q.size(), key.T_Q.size(), key.root_x.name);
 
@@ -216,6 +239,13 @@ void CheckKey(model::GraphKey const& key) {
 
     LOG_DEBUG("GK key descriptor is valid: {} pattern variables, root='{}'", variables.size(),
               key.root_x.name);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (key_check_trace)
+        LOG_TRACE("GK phase 'key_validation': {} ns",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - key_check_started)
+                          .count());
+#endif
 }
 
 std::vector<Node> CollectEntities(Graph const& graph) {
