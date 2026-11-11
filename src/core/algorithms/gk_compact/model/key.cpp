@@ -6,12 +6,10 @@
 #include <unordered_map>
 #include <utility>
 
-#include "core/algorithms/gk/model/validation.h"
-
 namespace gk_compact {
 namespace {
 
-TraversalOrder BuildTraversalOrder(CompiledKey const& key) {
+TraversalOrder BuildTraversalOrder(GraphKey const& key) {
     TraversalOrder order;
     order.reserve(key.triples.size());
     std::vector<std::uint8_t> reached(key.nodes.size(), 0);
@@ -32,7 +30,7 @@ TraversalOrder BuildTraversalOrder(CompiledKey const& key) {
                 if (!used[index] && (reached[triple.subject] || reached[triple.object])) break;
             }
         }
-        // CheckKey established connectivity before numeric preparation.
+        // The descriptor check established connectivity before numeric preparation.
         assert(index < key.triples.size());
         used[index] = 1;
         reached[key.triples[index].subject] = 1;
@@ -44,9 +42,10 @@ TraversalOrder BuildTraversalOrder(CompiledKey const& key) {
 
 }  // namespace
 
-std::optional<CompiledKey> CompileKey(gk::model::GraphKey const& key, Graph const& graph) {
-    gk::CheckKey(key);
-    CompiledKey result;
+std::optional<GraphKey> BuildGraphKey(gk::model::GraphKeyDescriptor const& key,
+                                      Graph const& graph) {
+    key.Check();
+    GraphKey result;
     std::unordered_map<gk::model::Variable, PatternNodeId> indices;
     auto intern = [&](gk::model::Variable const& variable) -> std::optional<PatternNodeId> {
         if (auto const it = indices.find(variable); it != indices.end()) return it->second;

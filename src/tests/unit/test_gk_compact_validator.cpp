@@ -50,13 +50,13 @@ Node Value(std::string value = "v") {
     return {NodeKind::kValue, std::move(value), {}};
 }
 
-GraphKey EntityKey(Variable target = y) {
+GraphKeyDescriptor EntityKey(Variable target = y) {
     return {{{x, "p", target}}, {{x, "X"}, {target, "Y"}}, x};
 }
 
-bool Evaluate(GraphKey const& key, Graph const& source) {
+bool Evaluate(GraphKeyDescriptor const& key, Graph const& source) {
     auto const graph = compact::BuildGraph(source);
-    auto numeric = compact::CompileKey(key, graph);
+    auto numeric = compact::BuildGraphKey(key, graph);
     if (!numeric) return false;
     compact::EvalGK evaluator(std::move(*numeric));
     compact::EquivalenceRelation const eq(graph.Metadata().GetEntityCount());
@@ -91,7 +91,7 @@ compact::Graph Select(compact::Graph const& source, std::vector<compact::VertexI
 
 // Independent small-graph oracle: sets, direct checks of edges, asynchronous
 // deletions and an exhaustive scan of potential support pairs.
-std::vector<std::set<compact::VertexPair>> ReferencePairing(compact::CompiledKey const& key,
+std::vector<std::set<compact::VertexPair>> ReferencePairing(compact::GraphKey const& key,
                                                             compact::GraphView first,
                                                             compact::GraphView second) {
     std::vector<std::set<compact::VertexPair>> result(key.nodes.size());
@@ -147,7 +147,7 @@ std::vector<std::set<compact::VertexPair>> ReferencePairing(compact::CompiledKey
     return result;
 }
 
-void ExpectReferencePairing(compact::CompiledKey const& key, compact::GraphView first,
+void ExpectReferencePairing(compact::GraphKey const& key, compact::GraphView first,
                             compact::GraphView second) {
     auto const actual = compact::ComputePairing(key, first, second);
     auto const expected = ReferencePairing(key, first, second);
@@ -164,7 +164,7 @@ void ExpectReferencePairing(compact::CompiledKey const& key, compact::GraphView 
 
 // Exhaustive assignments in node order, independent of the traversal and CSR
 // candidate generation. Check triples only after both full embeddings exist.
-bool ReferenceEvaluate(compact::CompiledKey const& key, compact::EvalGKInput const& input,
+bool ReferenceEvaluate(compact::GraphKey const& key, compact::EvalGKInput const& input,
                        compact::EquivalenceRelation const& eq) {
     std::vector<std::optional<compact::VertexPair>> assigned(key.nodes.size());
     assigned[key.root] = compact::VertexPair{input.first_root, input.second_root};
@@ -365,37 +365,39 @@ TEST(GkCompactValidatorTest, JointMappingOwnsAssignmentsAndChecksProjectionsInde
     EXPECT_TRUE(mapping.IsInjective(2, 1));
 }
 
-TEST(GkCompactValidatorTest, CompilesConnectedTraversalAndRejectsMalformedDescriptors) {
+TEST(GkCompactValidatorTest, BuildsConnectedTraversalAndRejectsMalformedDescriptors) {
     auto const graph = compact::BuildGraph(
             {{Entity("a"), "p", Entity("c", "Y")}, {Entity("c", "Y"), "q", Value()}});
-    GraphKey key{{{y, "q", z}, {x, "p", y}}, {{x, "X"}, {y, "Y"}}, x};
-    auto const compiled = compact::CompileKey(key, graph);
-    ASSERT_TRUE(compiled);
-    EXPECT_EQ(compiled->traversal_order, (compact::TraversalOrder{1, 0}));
-    std::vector<std::uint8_t> reached(compiled->nodes.size(), 0);
-    reached[compiled->root] = 1;
+    GraphKeyDescriptor key{{{y, "q", z}, {x, "p", y}}, {{x, "X"}, {y, "Y"}}, x};
+    auto const graph_key = compact::BuildGraphKey(key, graph);
+    ASSERT_TRUE(graph_key);
+    EXPECT_EQ(graph_key->traversal_order, (compact::TraversalOrder{1, 0}));
+    std::vector<std::uint8_t> reached(graph_key->nodes.size(), 0);
+    reached[graph_key->root] = 1;
     std::set<std::size_t> used;
-    for (auto index : compiled->traversal_order) {
-        ASSERT_LT(index, compiled->triples.size());
+    for (auto index : graph_key->traversal_order) {
+        ASSERT_LT(index, graph_key->triples.size());
         EXPECT_TRUE(used.insert(index).second);
-        auto const& triple = compiled->triples[index];
+        auto const& triple = graph_key->triples[index];
         EXPECT_TRUE(reached[triple.subject] || reached[triple.object]);
         reached[triple.subject] = reached[triple.object] = 1;
     }
-    EXPECT_EQ(used.size(), compiled->triples.size());
+    EXPECT_EQ(used.size(), graph_key->triples.size());
     auto missing = key;
     missing.Q.front().predicate = "absent";
-    EXPECT_FALSE(compact::CompileKey(missing, graph));
+    EXPECT_NO_THROW(missing.Check());
+    EXPECT_FALSE(compact::BuildGraphKey(missing, graph));
     missing = key;
     missing.T_Q[x] = "absent";
-    EXPECT_FALSE(compact::CompileKey(missing, graph));
-    GraphKey const absent_constant{{{x, "q", {VarKind::kConstant, "absent"}}}, {{x, "X"}}, x};
-    EXPECT_FALSE(compact::CompileKey(absent_constant, graph));
+    EXPECT_FALSE(compact::BuildGraphKey(missing, graph));
+    GraphKeyDescriptor const absent_constant{
+            {{x, "q", {VarKind::kConstant, "absent"}}}, {{x, "X"}}, x};
+    EXPECT_FALSE(compact::BuildGraphKey(absent_constant, graph));
     key.T_Q[x] = "-";
-    EXPECT_THROW(compact::CompileKey(key, graph), std::invalid_argument);
+    EXPECT_THROW(compact::BuildGraphKey(key, graph), std::invalid_argument);
     key.T_Q[x] = "X";
     key.root_x = {VarKind::kEntity, "absent"};
-    EXPECT_THROW(compact::CompileKey(key, graph), std::invalid_argument);
+    EXPECT_THROW(compact::BuildGraphKey(key, graph), std::invalid_argument);
 }
 
 TEST(GkCompactValidatorTest, EvalDistinguishesEntitiesWildcardsValuesAndConstants) {
@@ -406,8 +408,8 @@ TEST(GkCompactValidatorTest, EvalDistinguishesEntitiesWildcardsValuesAndConstant
     Graph const same{{Entity("a"), "p", Entity("c", "Y")}, {Entity("b"), "p", Entity("c", "Y")}};
     EXPECT_TRUE(Evaluate(EntityKey(), same));
     Graph const values{{Entity("a"), "name", Value()}, {Entity("b"), "name", Value()}};
-    GraphKey const value_key{{{x, "name", z}}, {{x, "X"}}, x};
-    GraphKey const constant_key{{{x, "name", constant}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const value_key{{{x, "name", z}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const constant_key{{{x, "name", constant}}, {{x, "X"}}, x};
     EXPECT_TRUE(Evaluate(value_key, values));
     EXPECT_TRUE(Evaluate(constant_key, values));
     auto unequal = values;
@@ -426,11 +428,11 @@ TEST(GkCompactValidatorTest, TraversalChecksReadyConstraintsBeforeFurtherExpansi
                                             {Entity("c", "Y"), "s", Entity("c", "Y")},
                                             {Entity("a"), "t", Entity("a")},
                                             {Entity("a"), "u", Entity("c", "Y")}});
-    GraphKey const pattern{
+    GraphKeyDescriptor const pattern{
             {{x, "p", w}, {w, "q", z}, {w, "r", x}, {w, "s", w}, {x, "t", x}, {x, "u", w}},
             {{x, "X"}, {w, "Y"}},
             x};
-    auto const key = *compact::CompileKey(pattern, graph);
+    auto const key = *compact::BuildGraphKey(pattern, graph);
     std::vector<std::uint8_t> reached(key.nodes.size(), 0), used(key.triples.size(), 0);
     reached[key.root] = 1;
     for (auto index : key.traversal_order) {
@@ -463,8 +465,8 @@ TEST(GkCompactValidatorTest, EvalIntersectionsAndConstantLookupsRespectBacktrack
     compact::GraphView const incomplete(graph, selected);
     compact::EquivalenceRelation const eq(graph.GetEntityCount());
     for (auto target : {z, constant}) {
-        GraphKey const pattern{{{x, "p", target}, {x, "q", target}}, {{x, "X"}}, x};
-        auto const key = *compact::CompileKey(pattern, graph);
+        GraphKeyDescriptor const pattern{{{x, "p", target}, {x, "q", target}}, {{x, "X"}}, x};
+        auto const key = *compact::BuildGraphKey(pattern, graph);
         compact::EvalGK evaluator(key);
         EXPECT_TRUE(evaluator.Evaluate({graph, graph, a, b}, eq));
         EXPECT_FALSE(evaluator.Evaluate({graph, incomplete, a, b}, eq));
@@ -472,8 +474,9 @@ TEST(GkCompactValidatorTest, EvalIntersectionsAndConstantLookupsRespectBacktrack
         EXPECT_TRUE(evaluator.Evaluate({graph, graph, b, a}, eq));
         EXPECT_TRUE(ReferenceEvaluate(key, {graph, graph, a, b}, eq));
     }
-    GraphKey const collision{{{x, "p", z}, {x, "q", constant}, {x, "q", z}}, {{x, "X"}}, x};
-    compact::EvalGK evaluator(*compact::CompileKey(collision, graph));
+    GraphKeyDescriptor const collision{
+            {{x, "p", z}, {x, "q", constant}, {x, "q", z}}, {{x, "X"}}, x};
+    compact::EvalGK evaluator(*compact::BuildGraphKey(collision, graph));
     EXPECT_FALSE(evaluator.Evaluate({graph, graph, a, b}, eq));
 }
 
@@ -482,21 +485,21 @@ TEST(GkCompactValidatorTest, EvalBacktracksHandlesIncomingEdgesAndChecksCycles) 
                        {Entity("a"), "p", Entity("d", "Y")},
                        {Entity("b"), "p", Entity("d", "Y")},
                        {Entity("d", "Y"), "q", Value()}};
-    GraphKey const key{{{y, "q", z}, {x, "p", y}}, {{x, "X"}, {y, "Y"}}, x};
+    GraphKeyDescriptor const key{{{y, "q", z}, {x, "p", y}}, {{x, "X"}, {y, "Y"}}, x};
     EXPECT_TRUE(Evaluate(key, source));
     Graph const incoming{{Entity("c", "Y"), "p", Entity("a")},
                          {Entity("c", "Y"), "p", Entity("b")}};
-    GraphKey const reverse{{{y, "p", x}}, {{x, "X"}, {y, "Y"}}, x};
+    GraphKeyDescriptor const reverse{{{y, "p", x}}, {{x, "X"}, {y, "Y"}}, x};
     EXPECT_TRUE(Evaluate(reverse, incoming));
     Graph cycle{{Entity("a"), "p", Entity("c", "Y")},
                 {Entity("b"), "p", Entity("d", "Y")},
                 {Entity("c", "Y"), "q", Entity("a")},
                 {Entity("d", "Y"), "q", Entity("b")}};
-    GraphKey const cyclic{{{x, "p", w}, {w, "q", x}}, {{x, "X"}, {w, "Y"}}, x};
+    GraphKeyDescriptor const cyclic{{{x, "p", w}, {w, "q", x}}, {{x, "X"}, {w, "Y"}}, x};
     EXPECT_TRUE(Evaluate(cyclic, cycle));
     cycle.pop_back();
     EXPECT_FALSE(Evaluate(cyclic, cycle));
-    GraphKey const loop{{{x, "p", x}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const loop{{{x, "p", x}}, {{x, "X"}}, x};
     EXPECT_TRUE(Evaluate(loop, {{Entity("a"), "p", Entity("a")}, {Entity("b"), "p", Entity("b")}}));
 }
 
@@ -505,8 +508,8 @@ TEST(GkCompactValidatorTest, EvalKeepsInjectivityAfterEquivalenceMergesAndResets
                                             {Entity("b"), "p", Entity("b")},
                                             {Entity("a"), "p", Entity("c")},
                                             {Entity("b"), "p", Entity("d")}});
-    GraphKey const key{{{x, "p", y}}, {{x, "X"}, {y, "X"}}, x};
-    compact::EvalGK evaluator(*compact::CompileKey(key, graph));
+    GraphKeyDescriptor const key{{{x, "p", y}}, {{x, "X"}, {y, "X"}}, x};
+    compact::EvalGK evaluator(*compact::BuildGraphKey(key, graph));
     auto const a = *graph.FindEntity("a"), b = *graph.FindEntity("b");
     compact::EquivalenceRelation eq(graph.Metadata().GetEntityCount());
     EXPECT_FALSE(evaluator.Evaluate({graph, graph, a, b}, eq));
@@ -518,7 +521,8 @@ TEST(GkCompactValidatorTest, EvalKeepsInjectivityAfterEquivalenceMergesAndResets
     EXPECT_FALSE(evaluator.Evaluate({graph, graph, a, b}, identity));
     EXPECT_TRUE(evaluator.Evaluate({graph, graph, b, a}, eq));
 
-    GraphKey const distinct_values{{{x, "name", z}, {x, "other", other_value}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const distinct_values{
+            {{x, "name", z}, {x, "other", other_value}}, {{x, "X"}}, x};
     EXPECT_FALSE(Evaluate(distinct_values, {{Entity("a"), "name", Value()},
                                             {Entity("a"), "other", Value()},
                                             {Entity("b"), "name", Value()},
@@ -535,8 +539,8 @@ TEST(GkCompactValidatorTest, SparseInputsUseOriginalIdsAndTheFullEquivalenceDoma
     auto first = Select(original, {a, c, v});
     auto second = Select(original, {b, c, v});
     ASSERT_GE(c, first.GetEntityCount());
-    GraphKey const key{{{x, "p", y}, {y, "q", z}}, {{x, "X"}, {y, "Y"}}, x};
-    compact::EvalGK evaluator(*compact::CompileKey(key, original));
+    GraphKeyDescriptor const key{{{x, "p", y}, {y, "q", z}}, {{x, "X"}, {y, "Y"}}, x};
+    compact::EvalGK evaluator(*compact::BuildGraphKey(key, original));
     compact::EquivalenceRelation const eq(original.Metadata().GetEntityCount());
     EXPECT_TRUE(evaluator.Evaluate({first, second, a, b}, eq));
     EXPECT_TRUE(evaluator.Evaluate({second, first, b, a}, eq));
@@ -750,7 +754,7 @@ TEST(GkCompactValidatorTest, GraphViewsFilterBothEndpointsWithoutCopyingCsr) {
 TEST(GkCompactValidatorTest, PatternRadiusUsesShortestUndirectedDistancesNotTraversalLength) {
     Variable const t{VarKind::kWildcard, "t"};
     auto const graph = compact::BuildGraph({{Entity("a"), "p", Entity("b")}});
-    std::vector<std::pair<GraphKey, std::size_t>> const cases{
+    std::vector<std::pair<GraphKeyDescriptor, std::size_t>> const cases{
             {{{{x, "p", x}}, {{x, "X"}}, x}, 0},
             {{{{y, "p", x}}, {{x, "X"}, {y, "X"}}, x}, 1},
             {{{{y, "p", x}, {w, "p", y}, {t, "p", w}}, {{x, "X"}, {y, "X"}, {w, "X"}, {t, "X"}}, x},
@@ -760,9 +764,9 @@ TEST(GkCompactValidatorTest, PatternRadiusUsesShortestUndirectedDistancesNotTrav
               x},
              1}};
     for (auto const& [key, expected] : cases) {
-        auto const compiled = compact::CompileKey(key, graph);
-        ASSERT_TRUE(compiled);
-        EXPECT_EQ(compact::GetPatternRadius(*compiled), expected);
+        auto const graph_key = compact::BuildGraphKey(key, graph);
+        ASSERT_TRUE(graph_key);
+        EXPECT_EQ(compact::GetPatternRadius(*graph_key), expected);
     }
 }
 
@@ -883,8 +887,8 @@ TEST(GkCompactValidatorTest, EvalUsesSelectionsAndMatchesMaterializedSubgraphs) 
     auto const a = *graph.FindEntity("a"), b = *graph.FindEntity("b");
     auto const c = *graph.FindEntity("c"), d = *graph.FindEntity("d");
     auto const value = *graph.FindValue("v");
-    GraphKey const key{{{x, "p", w}, {w, "q", z}}, {{x, "X"}, {w, "Y"}}, x};
-    compact::EvalGK evaluator(*compact::CompileKey(key, graph));
+    GraphKeyDescriptor const key{{{x, "p", w}, {w, "q", z}}, {{x, "X"}, {w, "Y"}}, x};
+    compact::EvalGK evaluator(*compact::BuildGraphKey(key, graph));
     compact::EquivalenceRelation const eq(graph.Metadata().GetEntityCount());
     std::vector<compact::VertexId> const first{a, c, value}, second{b, d, value};
     std::vector<compact::VertexId> const incomplete{b, d};
@@ -916,7 +920,7 @@ TEST(GkCompactValidatorTest, OptimizationsPreserveViolationsAndMatchReferencePai
         }
         std::shared_ptr<compact::Graph const> graph =
                 std::make_shared<compact::Graph const>(compact::BuildGraph(triples));
-        std::vector<GraphKey> const keys{
+        std::vector<GraphKeyDescriptor> const keys{
                 {{{x, "name", z}}, {{x, "X"}}, x},
                 {{{x, "loop", x}}, {{x, "X"}}, x},
                 {{{x, "p", w}}, {{x, "X"}, {w, "X"}}, x},
@@ -940,19 +944,19 @@ TEST(GkCompactValidatorTest, OptimizationsPreserveViolationsAndMatchReferencePai
                 Execute(validator, localization, pairing, reduction);
                 EXPECT_EQ(validator.GetViolations(), expected);
             }
-            auto const compiled = compact::CompileKey(key, *graph);
-            if (!compiled) continue;
-            ExpectReferencePairing(*compiled, *graph, *graph);
+            auto const graph_key = compact::BuildGraphKey(key, *graph);
+            if (!graph_key) continue;
+            ExpectReferencePairing(*graph_key, *graph, *graph);
             std::vector<compact::VertexId> roots;
             for (auto vertex : graph->EntityIds()) roots.push_back(vertex);
-            auto const neighborhoods = compact::PrepareNeighborhoods(*graph, roots, *compiled);
+            auto const neighborhoods = compact::PrepareNeighborhoods(*graph, roots, *graph_key);
             compact::EquivalenceRelation identity(graph->Metadata().GetEntityCount());
             compact::EquivalenceRelation merged(graph->Metadata().GetEntityCount());
             for (auto root : roots) merged.Merge(roots.front(), root);
-            compact::EvalGK evaluator(*compiled);
+            compact::EvalGK evaluator(*graph_key);
             for (std::size_t i = 0; i < roots.size(); ++i) {
                 for (std::size_t j = i + 1; j < roots.size(); ++j) {
-                    ExpectReferencePairing(*compiled, neighborhoods[i], neighborhoods[j]);
+                    ExpectReferencePairing(*graph_key, neighborhoods[i], neighborhoods[j]);
                     auto first_vertices = neighborhoods[i].VertexIds();
                     auto second_vertices = neighborhoods[j].VertexIds();
                     auto const materialized_first =
@@ -965,7 +969,7 @@ TEST(GkCompactValidatorTest, OptimizationsPreserveViolationsAndMatchReferencePai
                         auto const input = compact::EvalGKInput{neighborhoods[i], neighborhoods[j],
                                                                 roots[i], roots[j]};
                         bool const exact = ReferenceEvaluate(
-                                *compiled, {*graph, *graph, roots[i], roots[j]}, *eq);
+                                *graph_key, {*graph, *graph, roots[i], roots[j]}, *eq);
                         EXPECT_EQ(evaluator.Evaluate({*graph, *graph, roots[i], roots[j]}, *eq),
                                   exact);
                         EXPECT_EQ(evaluator.Evaluate(input, *eq), exact);
@@ -974,7 +978,7 @@ TEST(GkCompactValidatorTest, OptimizationsPreserveViolationsAndMatchReferencePai
                                                      *eq),
                                   exact);
                         for (bool reduction : {false, true})
-                            EXPECT_EQ(compact::EvaluatePair(evaluator, *compiled, input, *eq, true,
+                            EXPECT_EQ(compact::EvaluatePair(evaluator, *graph_key, input, *eq, true,
                                                             reduction),
                                       exact);
                     }
@@ -989,7 +993,7 @@ TEST(GkCompactValidatorTest, PairingDoesNotDependOnEquivalenceOrRequireInjectivi
             {{Entity("a"), "p", Entity("c", "Y")}, {Entity("b"), "p", Entity("d", "Y")}});
     auto const a = *graph.FindEntity("a"), b = *graph.FindEntity("b");
     auto const c = *graph.FindEntity("c"), d = *graph.FindEntity("d");
-    auto const key = *compact::CompileKey(EntityKey(), graph);
+    auto const key = *compact::BuildGraphKey(EntityKey(), graph);
     auto const pairing = compact::ComputePairing(key, graph, graph);
     EXPECT_TRUE(pairing.Contains(key.root, a, b));
     EXPECT_TRUE(pairing.Contains(key.root, a, a));
@@ -1002,22 +1006,22 @@ TEST(GkCompactValidatorTest, PairingDoesNotDependOnEquivalenceOrRequireInjectivi
     EXPECT_EQ(compact::ComputePairing(key, graph, graph).pairs, pairing.pairs);
 
     Variable const other_wildcard{VarKind::kWildcard, "other_wildcard"};
-    GraphKey const noninjective{{{x, "p", w}, {x, "q", other_wildcard}},
-                                {{x, "X"}, {w, "Y"}, {other_wildcard, "Y"}},
-                                x};
+    GraphKeyDescriptor const noninjective{{{x, "p", w}, {x, "q", other_wildcard}},
+                                          {{x, "X"}, {w, "Y"}, {other_wildcard, "Y"}},
+                                          x};
     auto const repeated = compact::BuildGraph({{Entity("a"), "p", Entity("c", "Y")},
                                                {Entity("a"), "q", Entity("c", "Y")},
                                                {Entity("b"), "p", Entity("d", "Y")},
                                                {Entity("b"), "q", Entity("d", "Y")}});
-    auto const compiled = *compact::CompileKey(noninjective, repeated);
+    auto const graph_key = *compact::BuildGraphKey(noninjective, repeated);
     auto const first = *repeated.FindEntity("a"), second = *repeated.FindEntity("b");
     std::array<compact::VertexId, 2> const roots{first, second};
-    auto const neighborhoods = compact::PrepareNeighborhoods(repeated, roots, compiled);
-    EXPECT_TRUE(compact::ComputePairing(compiled, neighborhoods[0], neighborhoods[1])
-                        .Contains(compiled.root, first, second));
-    compact::EvalGK exact(compiled);
+    auto const neighborhoods = compact::PrepareNeighborhoods(repeated, roots, graph_key);
+    EXPECT_TRUE(compact::ComputePairing(graph_key, neighborhoods[0], neighborhoods[1])
+                        .Contains(graph_key.root, first, second));
+    compact::EvalGK exact(graph_key);
     compact::EquivalenceRelation const identity(repeated.Metadata().GetEntityCount());
-    EXPECT_FALSE(compact::EvaluatePair(exact, compiled,
+    EXPECT_FALSE(compact::EvaluatePair(exact, graph_key,
                                        {neighborhoods[0], neighborhoods[1], first, second},
                                        identity, true, true));
 }
@@ -1029,23 +1033,24 @@ TEST(GkCompactValidatorTest, PairingHonorsValueConstantTypeAndViewDomains) {
                                             {Entity("b"), "state", Value("other")},
                                             {Entity("foreign", "Y"), "state", Value("fixed")}});
     auto const a = *graph.FindEntity("a"), b = *graph.FindEntity("b");
-    GraphKey const value_key{{{x, "name", z}}, {{x, "X"}}, x};
-    GraphKey const constant_key{{{x, "state", {VarKind::kConstant, "fixed"}}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const value_key{{{x, "name", z}}, {{x, "X"}}, x};
+    GraphKeyDescriptor const constant_key{
+            {{x, "state", {VarKind::kConstant, "fixed"}}}, {{x, "X"}}, x};
     for (auto const& key : {value_key, constant_key}) {
-        auto const compiled = *compact::CompileKey(key, graph);
-        ExpectReferencePairing(compiled, graph, graph);
-        auto const relation = compact::ComputePairing(compiled, graph, graph);
-        EXPECT_EQ(relation.Contains(compiled.root, a, b), key.Q.front().predicate == "name");
+        auto const graph_key = *compact::BuildGraphKey(key, graph);
+        ExpectReferencePairing(graph_key, graph, graph);
+        auto const relation = compact::ComputePairing(graph_key, graph, graph);
+        EXPECT_EQ(relation.Contains(graph_key.root, a, b), key.Q.front().predicate == "name");
         std::vector<compact::VertexId> const roots_only{a, b};
         auto const empty =
-                compact::ComputePairing(compiled, compact::GraphView(graph, roots_only), graph);
+                compact::ComputePairing(graph_key, compact::GraphView(graph, roots_only), graph);
         EXPECT_TRUE(empty.pairs.empty());
-        EXPECT_EQ(empty.offsets, std::vector<compact::Offset>(compiled.nodes.size() + 1, 0));
+        EXPECT_EQ(empty.offsets, std::vector<compact::Offset>(graph_key.nodes.size() + 1, 0));
     }
-    auto const compiled = *compact::CompileKey(value_key, graph);
+    auto const graph_key = *compact::BuildGraphKey(value_key, graph);
     compact::GraphView const empty_view(graph, std::span<compact::VertexId const>{});
-    EXPECT_TRUE(compact::ComputePairing(compiled, empty_view, graph).pairs.empty());
-    EXPECT_TRUE(compact::ComputePairing(compiled, graph, empty_view).pairs.empty());
+    EXPECT_TRUE(compact::ComputePairing(graph_key, empty_view, graph).pairs.empty());
+    EXPECT_TRUE(compact::ComputePairing(graph_key, graph, empty_view).pairs.empty());
 }
 
 TEST(GkCompactValidatorTest, PairingPropagatesSupportLossToAFixedPointAndKeepsCycles) {
@@ -1058,9 +1063,9 @@ TEST(GkCompactValidatorTest, PairingPropagatesSupportLossToAFixedPointAndKeepsCy
                                             {Entity("b2"), "p", Entity("d2", "Y")},
                                             {Entity("d2", "Y"), "q", Entity("f2", "Z")},
                                             {Entity("f2", "Z"), "r", Value()}});
-    GraphKey const pattern{
+    GraphKeyDescriptor const pattern{
             {{x, "p", y}, {y, "q", w}, {w, "r", z}}, {{x, "X"}, {y, "Y"}, {w, "Z"}}, x};
-    auto const key = *compact::CompileKey(pattern, graph);
+    auto const key = *compact::BuildGraphKey(pattern, graph);
     auto const a = *graph.FindEntity("a"), b = *graph.FindEntity("b"), b2 = *graph.FindEntity("b2");
     std::vector<compact::VertexId> first{a, *graph.FindEntity("c"), *graph.FindEntity("e"),
                                          *graph.FindValue("v")};
@@ -1082,8 +1087,8 @@ TEST(GkCompactValidatorTest, PairingPropagatesSupportLossToAFixedPointAndKeepsCy
 
     auto const cycle =
             compact::BuildGraph({{Entity("a"), "p", Entity("b")}, {Entity("b"), "p", Entity("a")}});
-    GraphKey const loop_pattern{{{x, "p", x}}, {{x, "X"}}, x};
-    auto const loop = *compact::CompileKey(loop_pattern, cycle);
+    GraphKeyDescriptor const loop_pattern{{{x, "p", x}}, {{x, "X"}}, x};
+    auto const loop = *compact::BuildGraphKey(loop_pattern, cycle);
     ExpectReferencePairing(loop, cycle, cycle);
     EXPECT_TRUE(compact::ComputePairing(loop, cycle, cycle)
                         .Contains(loop.root, *cycle.FindEntity("a"), *cycle.FindEntity("b")));

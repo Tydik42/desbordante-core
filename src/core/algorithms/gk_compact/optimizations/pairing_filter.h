@@ -31,7 +31,7 @@ struct PairingRelation {
 // support. Deliberately independent of Eq and injectivity, so Chase merges do
 // not invalidate it. The caller tests Contains(key.root, first_root, second_root).
 // Pairability is only necessary: a surviving pair still requires exact EvalGK.
-PairingRelation ComputePairing(CompiledKey const& key, GraphView first_neighborhood,
+PairingRelation ComputePairing(GraphKey const& key, GraphView first_neighborhood,
                                GraphView second_neighborhood);
 
 }  // namespace gk_compact

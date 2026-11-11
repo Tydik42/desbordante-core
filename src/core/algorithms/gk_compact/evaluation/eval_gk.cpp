@@ -4,7 +4,7 @@
 
 namespace gk_compact {
 
-EvalGK::EvalGK(CompiledKey key) : key_(std::move(key)), m_(key_.nodes.size()) {}
+EvalGK::EvalGK(GraphKey key) : key_(std::move(key)), m_(key_.nodes.size()) {}
 
 bool EvalGK::Evaluate(EvalGKInput const& input, EquivalenceRelation const& eq) {
     m_.Reset();

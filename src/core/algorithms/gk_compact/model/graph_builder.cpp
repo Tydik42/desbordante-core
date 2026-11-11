@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "core/algorithms/gk/model/validation.h"
+#include "core/algorithms/gk/model/graph_builder.h"
 #include "core/util/logger.h"
 
 namespace gk_compact {

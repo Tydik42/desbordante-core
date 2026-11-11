@@ -10,7 +10,7 @@
 namespace gk_compact {
 
 // Maximum undirected distance from key.root in the pattern, not traversal length.
-std::size_t GetPatternRadius(CompiledKey const& key);
+std::size_t GetPatternRadius(GraphKey const& key);
 
 // Owns only sorted vertex selections, packed in one flat array with offsets.
 // Neighborhood i corresponds to roots[i]. The graph is borrowed and never copied.

@@ -61,7 +61,7 @@ void CompactGkValidator::LoadDataInternal() {
         graph_ = std::make_shared<gk_compact::Graph const>(
                 gk_compact::parser::ReadGraph(graph_path_));
     if (!graph_) throw config::ConfigurationError("gk_graph must not be null");
-    key_ = gk_compact::CompileKey(source_key_, *graph_);
+    key_ = gk_compact::BuildGraphKey(source_key_, *graph_);
     data_ready_ = true;
     LOG_DEBUG("Loaded compact GK validation data: {} vertices, {} edges, key prepared={}",
               graph_->GetVertexCount(), graph_->GetEdgeCount(), key_.has_value());

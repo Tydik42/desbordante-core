@@ -16,8 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include "core/algorithms/gk/model/graph_builder.h"
 #include "core/algorithms/gk/parser/graph_parser.h"
-#include "core/algorithms/gk/model/validation.h"
 #include "core/algorithms/gk_compact/model/graph_builder.h"
 #include "core/algorithms/gk_compact/parser/graph_parser.h"
 

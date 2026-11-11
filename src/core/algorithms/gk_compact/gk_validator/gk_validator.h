@@ -29,10 +29,10 @@ public:
 private:
     std::shared_ptr<gk_compact::Graph const> graph_;
     std::filesystem::path graph_path_;
-    gk::model::GraphKey source_key_;
-    std::optional<gk_compact::CompiledKey> key_;
+    gk::model::GraphKeyDescriptor source_key_;
+    std::optional<gk_compact::GraphKey> key_;
     std::optional<gk::ValidationResult> result_;
-    // An absent compiled key also represents a valid load with no embeddings.
+    // An absent graph_key key also represents a valid load with no embeddings.
     bool data_ready_ = false;
     bool use_localization_ = false;
     bool use_pairing_filter_ = false;

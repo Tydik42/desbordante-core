@@ -8,8 +8,8 @@
 
 namespace gk_compact {
 
-std::size_t GetPatternRadius(CompiledKey const& key) {
-    // CompiledKey already guarantees connectivity and valid node IDs.
+std::size_t GetPatternRadius(GraphKey const& key) {
+    // GraphKey already guarantees connectivity and valid node IDs.
     std::vector<std::vector<PatternNodeId>> adjacent(key.nodes.size());
     for (auto const& triple : key.triples) {
         adjacent[triple.subject].push_back(triple.object);

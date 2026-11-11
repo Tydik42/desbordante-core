@@ -18,7 +18,7 @@ PairingRelation EmptyRelation(std::size_t nodes) {
     return {std::vector<Offset>(nodes + 1, 0), {}};
 }
 
-PairingRelation InitialRelation(CompiledKey const& key, GraphView first, GraphView second) {
+PairingRelation InitialRelation(GraphKey const& key, GraphView first, GraphView second) {
     std::vector<TypeId> types;
     for (auto const& node : key.nodes)
         if (node.kind == VarKind::kEntity || node.kind == VarKind::kWildcard)
@@ -144,7 +144,7 @@ bool HasSupport(VertexPair pair, PredicateId predicate, PatternNodeId neighbor, 
 
 }  // namespace
 
-PairingRelation ComputePairing(CompiledKey const& key, GraphView first, GraphView second) {
+PairingRelation ComputePairing(GraphKey const& key, GraphView first, GraphView second) {
     auto result = InitialRelation(key, first, second);
     if (result.pairs.empty()) return result;
     std::vector<std::vector<std::size_t>> incident(key.nodes.size());
