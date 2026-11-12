@@ -13,6 +13,12 @@ EquivalenceRelation::EquivalenceRelation(std::size_t entity_count)
         throw std::length_error("Compact GK equivalence exceeds its 32-bit entity ID space");
 }
 
+EquivalenceRelation::EquivalenceRelation(std::shared_ptr<GraphMetadata const> metadata)
+    : EquivalenceRelation(metadata ? metadata->GetEntityCount() : 0) {
+    if (!metadata) throw std::invalid_argument("Compact GK equivalence requires metadata");
+    metadata_ = std::move(metadata);
+}
+
 EquivalenceRelation& EquivalenceRelation::operator=(EquivalenceRelation const& other) {
     if (this != &other) {
         EquivalenceRelation copy(other);
@@ -24,6 +30,8 @@ EquivalenceRelation& EquivalenceRelation::operator=(EquivalenceRelation const& o
 EquivalenceRelation::EquivalenceRelation(EquivalenceRelation&& other) noexcept
     : parents_(std::move(other.parents_)),
       sizes_(std::move(other.sizes_)),
+      metadata_(std::move(other.metadata_)),
+      merged_types_(std::move(other.merged_types_)),
       entity_count_(std::exchange(other.entity_count_, 0)),
       class_count_(std::exchange(other.class_count_, 0)) {}
 
@@ -31,6 +39,8 @@ EquivalenceRelation& EquivalenceRelation::operator=(EquivalenceRelation&& other)
     if (this != &other) {
         parents_ = std::move(other.parents_);
         sizes_ = std::move(other.sizes_);
+        metadata_ = std::move(other.metadata_);
+        merged_types_ = std::move(other.merged_types_);
         entity_count_ = std::exchange(other.entity_count_, 0);
         class_count_ = std::exchange(other.class_count_, 0);
     }
@@ -65,17 +75,23 @@ bool EquivalenceRelation::Merge(VertexId first, VertexId second) {
         throw std::out_of_range("Compact GK equivalence requires an entity ID");
     if (first == second) return false;
     if (IsIdentity()) {
-        // Build both buffers before committing either: allocation failure must
+        // Build all buffers before committing: allocation failure must
         // leave Eq_0 intact and usable for a later retry.
         std::vector<VertexId> parents(entity_count_);
         std::iota(parents.begin(), parents.end(), VertexId{0});
         std::vector<std::uint32_t> sizes(entity_count_, 1);
+        std::vector<std::uint8_t> merged_types(metadata_ ? metadata_->Types().size() : 0, 0);
         parents_ = std::move(parents);
         sizes_ = std::move(sizes);
+        merged_types_ = std::move(merged_types);
     }
     auto first_root = CompressRoot(first);
     auto second_root = CompressRoot(second);
     if (first_root == second_root) return false;
+    if (metadata_) {
+        merged_types_[metadata_->Vertices().types[first]] = 1;
+        merged_types_[metadata_->Vertices().types[second]] = 1;
+    }
     if (sizes_[first_root] < sizes_[second_root]) std::swap(first_root, second_root);
     parents_[second_root] = first_root;
     sizes_[first_root] += sizes_[second_root];

@@ -13,6 +13,8 @@ namespace gk_compact {
 // Borrows a graph and, optionally, a sorted unique subset of its active IDs.
 // The subset defines an induced subgraph; an empty subset is NOT the full graph.
 // Neither owner may be destroyed or replaced while this view or its ranges are used.
+// Hot kernels can dispatch IsFull() once and use Base() directly for plain CSR
+// spans. Selected views filter neighbors without materializing another topology.
 class GraphView {
 private:
     Graph const* graph_;
@@ -41,6 +43,12 @@ public:
 
     Graph const& Base() const noexcept {
         return *graph_;
+    }
+
+    // Full means all active vertices of Base(), including a physically sparse
+    // Graph. An explicitly empty selection is never a full representation.
+    bool IsFull() const noexcept {
+        return !vertices_;
     }
 
     std::size_t GetVertexCount() const noexcept {
@@ -92,6 +100,18 @@ public:
         return FilterEdges(!vertices_ || ContainsVertex(vertex)
                                    ? graph_->Incoming(vertex, predicate)
                                    : std::span<Edge const>{});
+    }
+
+    // Precondition: vertex belongs to this view. The exact evaluator establishes
+    // this when it binds a root/candidate, so checking the anchor again is
+    // redundant. Neighbors are still filtered: membership of the anchor alone
+    // does not imply membership of all its original neighbors.
+    auto OutgoingFromMember(VertexId vertex, PredicateId predicate) const {
+        return FilterEdges(graph_->Outgoing(vertex, predicate));
+    }
+
+    auto IncomingToMember(VertexId vertex, PredicateId predicate) const {
+        return FilterEdges(graph_->Incoming(vertex, predicate));
     }
 
     bool HasEdge(VertexId subject, PredicateId predicate, VertexId object) const {

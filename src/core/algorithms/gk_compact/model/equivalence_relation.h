@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "core/algorithms/gk_compact/model/graph.h"
@@ -14,6 +15,9 @@ namespace gk_compact {
 class EquivalenceRelation {
 public:
     explicit EquivalenceRelation(std::size_t entity_count);
+    // Shared metadata enables a conservative identity fast path per type.
+    // Without it, only global Eq_0 can be recognized.
+    explicit EquivalenceRelation(std::shared_ptr<GraphMetadata const> metadata);
     EquivalenceRelation(EquivalenceRelation const&) = default;
     EquivalenceRelation& operator=(EquivalenceRelation const& other);
     // A moved-from relation is the empty identity relation.
@@ -44,9 +48,17 @@ public:
         return class_count_ == GetEntityCount();
     }
 
+    // True guarantees that two entities of this type are equivalent only when
+    // their IDs agree. False may be conservative, including after cross-type merges.
+    bool IsIdentity(TypeId type) const noexcept {
+        return IsIdentity() || (type < merged_types_.size() && !merged_types_[type]);
+    }
+
 private:
     std::vector<VertexId> parents_;
     std::vector<std::uint32_t> sizes_;
+    std::shared_ptr<GraphMetadata const> metadata_;
+    std::vector<std::uint8_t> merged_types_;
     std::size_t entity_count_;
     std::size_t class_count_;
 
