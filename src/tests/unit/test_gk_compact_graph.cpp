@@ -1,0 +1,699 @@
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <set>
+#include <span>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "core/algorithms/gk/model/graph_builder.h"
+#include "core/algorithms/gk/parser/graph_parser.h"
+#include "core/algorithms/gk_compact/model/graph_builder.h"
+#include "core/algorithms/gk_compact/model/graph_view.h"
+#include "core/algorithms/gk_compact/parser/graph_parser.h"
+
+namespace {
+
+using namespace gk::model;
+using CompactGraph = gk_compact::Graph;
+using CompactGraphBuilder = gk_compact::GraphBuilder;
+using Id = gk_compact::VertexId;
+using Edge = gk_compact::Edge;
+using Fact = std::tuple<std::string, std::string, std::string, NodeKind, std::string, std::string>;
+
+Node Entity(std::string id, std::string type = "Person") {
+    return {NodeKind::kEntity, std::move(id), std::move(type)};
+}
+
+Node Value(std::string value) {
+    return {NodeKind::kValue, std::move(value), {}};
+}
+
+Graph ExampleGraph() {
+    return {{Entity("a"), "worksAt", Entity("c", "Company")},
+            {Entity("b"), "worksAt", Entity("c", "Company")},
+            {Entity("a"), "name", Value("Alice")}};
+}
+
+gk_compact::GraphData SparseExampleData() {
+    auto const source = gk_compact::BuildGraph(ExampleGraph());
+    // a=0, b=1, c=2, Alice=3; keep a, c and Alice, not b.
+    gk_compact::GraphData data;
+    data.metadata = source.Data().metadata;
+    data.row_to_vertex = {0, 2, 3};
+    data.outgoing = {{0, 2, 2, 2}, {{0, 3}, {1, 2}}};
+    data.incoming = {{0, 0, 1, 2}, {{1, 0}, {0, 0}}};
+    data.input_triple_count = 2;
+    return data;
+}
+
+std::set<Fact> Facts(Graph const& graph) {
+    std::set<Fact> result;
+    for (auto const& triple : graph) {
+        result.emplace(triple.subject.id_or_val, triple.subject.type, triple.predicate,
+                       triple.object.kind, triple.object.id_or_val, triple.object.type);
+    }
+    return result;
+}
+
+Graph Expand(CompactGraph const& graph) {
+    Graph result;
+    for (auto vertex : graph.VertexIds()) {
+        for (auto const& edge : graph.Outgoing(vertex)) {
+            result.push_back({gk_compact::GetNode(graph.Data(), vertex),
+                              graph.Metadata().Predicates().at(edge.predicate),
+                              gk_compact::GetNode(graph.Data(), edge.neighbor)});
+        }
+    }
+    return result;
+}
+
+std::vector<Edge> Copy(std::span<Edge const> edges) {
+    return {edges.begin(), edges.end()};
+}
+
+void CheckRepresentation(CompactGraph const& graph, Graph const& source) {
+    ASSERT_EQ(Facts(Expand(graph)), Facts(source));
+    EXPECT_EQ(graph.GetInputTripleCount(), source.size());
+    EXPECT_EQ(graph.GetEdgeCount(), Facts(source).size());
+    for (auto offsets : {std::span<gk_compact::Offset const>(graph.Data().outgoing.offsets),
+                         std::span<gk_compact::Offset const>(graph.Data().incoming.offsets)}) {
+        if (offsets.empty()) {
+            EXPECT_EQ(graph.GetVertexCount(), 0U);
+            EXPECT_EQ(graph.GetEdgeCount(), 0U);
+            continue;
+        }
+        ASSERT_EQ(offsets.size(), graph.GetVertexCount() + 1);
+        EXPECT_EQ(offsets.front(), 0U);
+        EXPECT_EQ(offsets.back(), graph.GetEdgeCount());
+        EXPECT_TRUE(std::is_sorted(offsets.begin(), offsets.end()));
+    }
+    std::size_t incoming_count = 0;
+    std::size_t entity_count = 0;
+    for (auto vertex : graph.VertexIds()) {
+        EXPECT_TRUE(graph.ContainsVertex(vertex));
+        auto const outgoing = graph.Outgoing(vertex);
+        auto const incoming = graph.Incoming(vertex);
+        incoming_count += incoming.size();
+        auto less = [](Edge const& lhs, Edge const& rhs) {
+            return std::tie(lhs.predicate, lhs.neighbor) < std::tie(rhs.predicate, rhs.neighbor);
+        };
+        EXPECT_TRUE(std::is_sorted(outgoing.begin(), outgoing.end(), less));
+        EXPECT_TRUE(std::is_sorted(incoming.begin(), incoming.end(), less));
+        EXPECT_EQ(std::adjacent_find(outgoing.begin(), outgoing.end()), outgoing.end());
+        EXPECT_EQ(std::adjacent_find(incoming.begin(), incoming.end()), incoming.end());
+        for (auto const& edge : incoming) {
+            ASSERT_TRUE(graph.ContainsVertex(edge.neighbor));
+            ASSERT_LT(edge.predicate, graph.Metadata().Predicates().size());
+            EXPECT_TRUE(graph.HasEdge(edge.neighbor, edge.predicate, vertex));
+        }
+        for (std::size_t p = 0; p < graph.Metadata().Predicates().size(); ++p) {
+            auto const predicate = static_cast<gk_compact::PredicateId>(p);
+            for (bool const reverse : {false, true}) {
+                auto const all = reverse ? incoming : outgoing;
+                auto const filtered = reverse ? graph.Incoming(vertex, predicate)
+                                              : graph.Outgoing(vertex, predicate);
+                std::vector<Edge> expected;
+                for (auto edge : all) {
+                    if (edge.predicate == predicate) expected.push_back(edge);
+                }
+                EXPECT_EQ(Copy(filtered), expected);
+            }
+        }
+        EXPECT_TRUE(graph.Outgoing(vertex, gk_compact::kNoType).empty());
+        EXPECT_TRUE(graph.Incoming(vertex, gk_compact::kNoType).empty());
+    }
+    for (auto entity : graph.EntityIds()) {
+        EXPECT_EQ(gk_compact::GetNode(graph.Data(), entity).kind, NodeKind::kEntity);
+        EXPECT_LT(graph.Metadata().Vertices().types.at(entity), graph.Metadata().Types().size());
+        ++entity_count;
+    }
+    EXPECT_EQ(entity_count, graph.GetEntityCount());
+    EXPECT_EQ(incoming_count, graph.GetEdgeCount());
+}
+
+}  // namespace
+
+TEST(GkCompactGraphTest, EmptyGraphHasValidOffsetsAndNoDictionaryEntries) {
+    for (auto const& graph : {CompactGraph{}, gk_compact::BuildGraph({})}) {
+        CheckRepresentation(graph, {});
+        EXPECT_EQ(graph.GetVertexCount(), 0U);
+        EXPECT_EQ(graph.GetEntityCount(), 0U);
+        EXPECT_EQ(graph.Metadata().Types().size(), 0U);
+        EXPECT_EQ(graph.Metadata().Predicates().size(), 0U);
+        EXPECT_FALSE(gk_compact::FindEntity(graph.Metadata().Vertices(), "missing"));
+        EXPECT_FALSE(gk_compact::FindValue(graph.Metadata().Vertices(), "missing"));
+        EXPECT_FALSE(gk_compact::FindLabel(graph.Metadata().Types(), "missing"));
+        EXPECT_FALSE(gk_compact::FindLabel(graph.Metadata().Predicates(), "missing"));
+        EXPECT_THROW(gk_compact::GetNode(graph.Data(), 0), std::out_of_range);
+        EXPECT_THROW(static_cast<void>(graph.Metadata().Types().at(0)), std::out_of_range);
+        EXPECT_THROW(gk_compact::AdjacentRow(graph.Data().outgoing, 0), std::out_of_range);
+        EXPECT_THROW(gk_compact::AdjacentRow(graph.Data().incoming, 0), std::out_of_range);
+    }
+}
+
+TEST(GkCompactGraphTest, MaterializedSelectionsOwnTopologyAndPreserveOriginalIdsAndMetadata) {
+    auto const source = gk_compact::BuildGraph(ExampleGraph());
+    std::vector<Id> const vertices{*source.FindEntity("a"), *source.FindEntity("c"),
+                                   *source.FindValue("Alice")};
+    auto materialized = gk_compact::Materialize(gk_compact::GraphView(source, vertices));
+    EXPECT_EQ(materialized.Data().metadata, source.Data().metadata);
+    EXPECT_EQ(materialized.GetVertexCount(), 3U);
+    EXPECT_EQ(materialized.GetEntityCount(), 2U);
+    EXPECT_EQ(materialized.GetEdgeCount(), 2U);
+    EXPECT_EQ(materialized.Data().row_to_vertex, vertices);
+    EXPECT_EQ(Facts(Expand(materialized)), Facts(Graph{ExampleGraph()[0], ExampleGraph()[2]}));
+    auto const copied = gk_compact::Materialize(gk_compact::GraphView(materialized));
+    EXPECT_EQ(Facts(Expand(copied)), Facts(Expand(materialized)));
+
+    auto isolated = [&] {
+        auto const temporary = gk_compact::BuildGraph(ExampleGraph());
+        std::vector<Id> const selection{*temporary.FindEntity("b")};
+        return gk_compact::Materialize(gk_compact::GraphView(temporary, selection));
+    }();
+    EXPECT_EQ(isolated.GetVertexCount(), 1U);
+    EXPECT_EQ(isolated.GetEdgeCount(), 0U);
+    EXPECT_EQ(isolated.GetLabel(*isolated.FindEntity("b")), "b");
+    EXPECT_TRUE(isolated.ContainsVertex(*isolated.FindEntity("b")));
+    EXPECT_FALSE(isolated.ContainsVertex(*isolated.FindEntity("a")));
+    auto const empty = gk_compact::Materialize(gk_compact::GraphView(source, {}));
+    EXPECT_EQ(empty.GetVertexCount(), 0U);
+    EXPECT_EQ(empty.GetEdgeCount(), 0U);
+    EXPECT_EQ(empty.Data().metadata, source.Data().metadata);
+}
+
+TEST(GkCompactGraphTest, KeepsEntityValueAndLabelNamespacesSeparate) {
+    auto source = ExampleGraph();
+    source.push_back({Entity("Alice"), "name", Value("Alice")});
+    source.push_back({Entity("Alice"), "Person", Value("Company")});
+    auto const graph = gk_compact::BuildGraph(source);
+    CheckRepresentation(graph, source);
+    EXPECT_EQ(graph.GetVertexCount(), 6U);
+    EXPECT_EQ(graph.GetEntityCount(), 4U);
+    auto const entity = gk_compact::FindEntity(graph.Metadata().Vertices(), "Alice");
+    auto const value = gk_compact::FindValue(graph.Metadata().Vertices(), "Alice");
+    ASSERT_TRUE(entity);
+    ASSERT_TRUE(value);
+    EXPECT_NE(*entity, *value);
+    EXPECT_EQ(gk_compact::GetNode(graph.Data(), *entity), Entity("Alice"));
+    EXPECT_EQ(gk_compact::GetNode(graph.Data(), *value), Value("Alice"));
+    EXPECT_EQ(graph.Metadata().Vertices().types.at(*value), gk_compact::kNoType);
+    EXPECT_EQ(std::ranges::count(gk_compact::EntityIds(graph.Metadata().Vertices()),
+                                 *gk_compact::FindLabel(graph.Metadata().Types(), "Person"),
+                                 [&](Id id) { return graph.Metadata().Vertices().types.at(id); }),
+              3);
+    EXPECT_EQ(std::ranges::count(gk_compact::EntityIds(graph.Metadata().Vertices()),
+                                 *gk_compact::FindLabel(graph.Metadata().Types(), "Company"),
+                                 [&](Id id) { return graph.Metadata().Vertices().types.at(id); }),
+              1);
+    EXPECT_TRUE(gk_compact::FindLabel(graph.Metadata().Predicates(), "Person"));
+    EXPECT_FALSE(gk_compact::FindLabel(graph.Metadata().Types(), "Alice"));
+    EXPECT_FALSE(gk_compact::FindLabel(graph.Metadata().Predicates(), "missing"));
+}
+
+TEST(GkCompactGraphTest, BuildsBothDirectionsAndPredicateRanges) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    CheckRepresentation(graph, ExampleGraph());
+    auto const a = *gk_compact::FindEntity(graph.Metadata().Vertices(), "a");
+    auto const b = *gk_compact::FindEntity(graph.Metadata().Vertices(), "b");
+    auto const company = *gk_compact::FindEntity(graph.Metadata().Vertices(), "c");
+    auto const value = *gk_compact::FindValue(graph.Metadata().Vertices(), "Alice");
+    auto const works = *gk_compact::FindLabel(graph.Metadata().Predicates(), "worksAt");
+    auto const name = *gk_compact::FindLabel(graph.Metadata().Predicates(), "name");
+    std::vector<Edge> expected{{works, company}, {name, value}};
+    std::ranges::sort(expected);
+    EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().outgoing, a)), expected);
+    EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().incoming, company)),
+              (std::vector<Edge>{{works, a}, {works, b}}));
+    EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().outgoing, a, name)),
+              (std::vector<Edge>{{name, value}}));
+    EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().incoming, value, name)),
+              (std::vector<Edge>{{name, a}}));
+    EXPECT_TRUE(gk_compact::AdjacentRow(graph.Data().outgoing, company).empty());
+    EXPECT_TRUE(gk_compact::AdjacentRow(graph.Data().outgoing, value).empty());
+    EXPECT_TRUE(gk_compact::AdjacentRow(graph.Data().incoming, a).empty());
+    EXPECT_TRUE(gk_compact::ContainsAtRow(graph.Data().outgoing, a, works, company));
+    EXPECT_FALSE(gk_compact::ContainsAtRow(graph.Data().outgoing, company, works, a));
+    EXPECT_FALSE(gk_compact::ContainsAtRow(graph.Data().outgoing, a, name, company));
+}
+
+TEST(GkCompactGraphTest, DeduplicatesFactsButKeepsLoopsAndDifferentPredicates) {
+    Graph const source = {{Entity("a"), "p", Entity("b")},
+                          {Entity("a"), "q", Entity("b")},
+                          {Entity("a"), "p", Entity("a")},
+                          {Entity("a"), "p", Entity("b")},
+                          {Entity("b"), "q", Entity("a")}};
+    auto const graph = gk_compact::BuildGraph(source);
+    CheckRepresentation(graph, source);
+    EXPECT_EQ(graph.GetInputTripleCount(), 5U);
+    EXPECT_EQ(graph.GetEdgeCount(), 4U);
+    auto const a = *gk_compact::FindEntity(graph.Metadata().Vertices(), "a");
+    EXPECT_TRUE(gk_compact::ContainsAtRow(
+            graph.Data().outgoing, a, *gk_compact::FindLabel(graph.Metadata().Predicates(), "p"),
+            a));
+}
+
+TEST(GkCompactGraphTest, ReadsTheSameCsvIncludingQuotesUnicodeAndMultilineValues) {
+    for (std::string const ending : {"\n", "\r\n"}) {
+        std::string const csv =
+                "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type" +
+                ending + "\"a,one\",Person,worksAt,entity,c,Company" + ending +
+                "\"a,one\",Person,name,value,\"Алиса, \"\"A\"\"" + ending + "second line\",-" +
+                ending + "c,Company,name,value,\" a\t\\n \",-" + ending +
+                "\"a,one\",Person,worksAt,entity,c,Company";
+        std::istringstream string_stream(csv);
+        std::istringstream compact_stream(csv);
+        auto const source = gk::parser::ReadGraph(string_stream);
+        auto const graph = gk_compact::parser::ReadGraph(compact_stream);
+        CheckRepresentation(graph, source);
+        auto const converted = gk_compact::BuildGraph(source);
+        EXPECT_EQ(Facts(Expand(converted)), Facts(Expand(graph)));
+        EXPECT_TRUE(gk_compact::FindValue(graph.Metadata().Vertices(),
+                                          "Алиса, \"A\"" + ending + "second line"));
+        EXPECT_TRUE(gk_compact::FindValue(graph.Metadata().Vertices(), " a\t\\n "));
+    }
+    std::istringstream header(
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,"
+            "object_type\n");
+    CheckRepresentation(gk_compact::parser::ReadGraph(header), {});
+}
+
+TEST(GkCompactGraphTest, LoadsCsvFromPathAndReportsMissingFiles) {
+    auto const directory =
+            std::filesystem::path(__FILE__).parent_path() / "../../../examples/datasets/gk";
+    auto const graph = gk_compact::parser::ReadGraph(directory / "simple_graph.csv");
+    CheckRepresentation(graph, gk::parser::ReadGraph(directory / "simple_graph.csv"));
+    EXPECT_THROW(gk_compact::parser::ReadGraph(directory / "does-not-exist.csv"),
+                 std::runtime_error);
+}
+
+TEST(GkCompactGraphTest, CsvRejectsMalformedAndInconsistentDataLikeTheStringLoader) {
+    std::string const header =
+            "subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type\n";
+    for (std::string const& body :
+         {"a,X,p,entity,b\n", "a,X,p,value,value,Y\n", "a,X,p,entity,b,-\n", "a,X,p,other,b,Y\n",
+          "a,X,p,value,\"unfinished\n", "a,X,p,value,,\n", "a,X,p,entity,b,Y\nb,Z,q,value,v,-\n",
+          "a,X,p,entity,a,Y\n", "a,-,p,value,v,-\n"}) {
+        SCOPED_TRACE(body);
+        std::istringstream string_stream(header + body);
+        std::istringstream compact_stream(header + body);
+        EXPECT_THROW(gk::parser::ReadGraph(string_stream), std::runtime_error);
+        EXPECT_THROW(gk_compact::parser::ReadGraph(compact_stream), std::runtime_error);
+    }
+    std::istringstream empty;
+    EXPECT_THROW(gk_compact::parser::ReadGraph(empty), std::runtime_error);
+}
+
+TEST(GkCompactGraphTest, BuilderRejectsInvalidDescriptorsWithoutAddingRejectedFacts) {
+    Triple const valid{Entity("a"), "p", Entity("b")};
+    std::vector<Triple> const invalid = {{Value("a"), "p", Entity("b")},
+                                         {Entity(""), "p", Entity("b")},
+                                         {Entity("a", ""), "p", Entity("b")},
+                                         {Entity("a", "-"), "p", Entity("b")},
+                                         {Entity("a"), "p", Entity("b", "-")},
+                                         {Entity("a"), "", Entity("b")},
+                                         {Entity("a"), "p", Value("")},
+                                         {Entity("a"), "p", {NodeKind::kValue, "v", "wrong"}},
+                                         {Entity("a"), "p", {static_cast<NodeKind>(-1), "v", {}}},
+                                         {Entity("a", "Other"), "p", Entity("b")},
+                                         {Entity("new"), "p", Entity("a", "Other")},
+                                         {Entity("new", "X"), "p", Entity("new", "Y")}};
+    CompactGraphBuilder builder;
+    builder.AddTriple(valid);
+    for (auto const& triple : invalid) {
+        EXPECT_THROW(builder.AddTriple(triple), std::invalid_argument);
+        EXPECT_THROW(gk::CheckGraph(Graph{valid, triple}), std::invalid_argument);
+    }
+    auto const graph = std::move(builder).Build();
+    CheckRepresentation(graph, {valid});
+    EXPECT_EQ(graph.GetVertexCount(), 2U);
+    EXPECT_FALSE(gk_compact::FindEntity(graph.Metadata().Vertices(), "new"));
+}
+
+TEST(GkCompactGraphTest, RoundTripsAllThreeEntityDirectedGraphs) {
+    for (unsigned int mask = 0; mask < 512; ++mask) {
+        SCOPED_TRACE(mask);
+        Graph source;
+        for (unsigned int i = 0; i < 3; ++i) {
+            auto const from = Entity(std::string(1, static_cast<char>('a' + i)));
+            source.push_back({from, "code", Value(i == 0 ? "shared" : "other")});
+            for (unsigned int j = 0; j < 3; ++j) {
+                if (mask & (1U << (3 * i + j))) {
+                    source.push_back(
+                            {from, "p", Entity(std::string(1, static_cast<char>('a' + j)))});
+                }
+            }
+        }
+        if (mask % 2 == 0) source.push_back(source.front());
+        auto const graph = gk_compact::BuildGraph(source);
+        CheckRepresentation(graph, source);
+        std::reverse(source.begin(), source.end());
+        auto const reversed = gk_compact::BuildGraph(source);
+        CheckRepresentation(reversed, source);
+        EXPECT_EQ(Facts(Expand(graph)), Facts(Expand(reversed)));
+    }
+}
+
+TEST(GkCompactGraphTest, NumberingAndCsrDoNotDependOnInputOrder) {
+    Graph source = ExampleGraph();
+    source.push_back({Entity("z", "AType"), "another", Value("z")});
+    source.push_back({Entity("Alice", "ZType"), "name", Value("a")});
+    source.push_back({Entity("z", "AType"), "Person", Entity("Alice", "ZType")});
+    auto const reference = gk_compact::BuildGraph(source);
+    for (std::size_t permutation = 0; permutation < 2 * source.size(); ++permutation) {
+        SCOPED_TRACE(permutation);
+        std::rotate(source.begin(), source.begin() + 1, source.end());
+        if (permutation == source.size()) std::reverse(source.begin(), source.end());
+        auto const graph = gk_compact::BuildGraph(source);
+        CheckRepresentation(graph, source);
+        ASSERT_EQ(graph.GetVertexCount(), reference.GetVertexCount());
+        ASSERT_EQ(graph.Metadata().Types().size(), reference.Metadata().Types().size());
+        ASSERT_EQ(graph.Metadata().Predicates().size(), reference.Metadata().Predicates().size());
+        for (std::size_t i = 0; i < graph.GetVertexCount(); ++i) {
+            auto const vertex = static_cast<Id>(i);
+            EXPECT_EQ(gk_compact::GetNode(graph.Data(), vertex),
+                      gk_compact::GetNode(reference.Data(), vertex));
+            EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().outgoing, vertex)),
+                      Copy(gk_compact::AdjacentRow(reference.Data().outgoing, vertex)));
+            EXPECT_EQ(Copy(gk_compact::AdjacentRow(graph.Data().incoming, vertex)),
+                      Copy(gk_compact::AdjacentRow(reference.Data().incoming, vertex)));
+        }
+        for (std::size_t i = 0; i < graph.Metadata().Types().size(); ++i) {
+            auto const id = static_cast<gk_compact::TypeId>(i);
+            EXPECT_EQ(graph.Metadata().Types().at(id), reference.Metadata().Types().at(id));
+        }
+        for (std::size_t i = 0; i < graph.Metadata().Predicates().size(); ++i) {
+            auto const id = static_cast<gk_compact::PredicateId>(i);
+            EXPECT_EQ(graph.Metadata().Predicates().at(id),
+                      reference.Metadata().Predicates().at(id));
+        }
+    }
+}
+
+TEST(GkCompactGraphTest, ConsumedBuilderDoesNotKeepStateOrOwnTheFinishedGraph) {
+    CompactGraphBuilder builder;
+    auto const source = ExampleGraph();
+    for (auto const& triple : source) builder.AddTriple(triple);
+    auto const first = std::move(builder).Build();
+    Graph const other = {{Entity("a", "Other"), "different", Value("new")}};
+    builder.AddTriple(other.front());
+    auto const second = std::move(builder).Build();
+    CheckRepresentation(first, source);
+    CheckRepresentation(second, other);
+    EXPECT_FALSE(gk_compact::FindLabel(second.Metadata().Predicates(), "worksAt"));
+    EXPECT_FALSE(gk_compact::FindEntity(second.Metadata().Vertices(), "b"));
+    EXPECT_EQ(first.GetEntityCount(), 3U);
+    EXPECT_EQ(second.GetEntityCount(), 1U);
+}
+
+TEST(GkCompactGraphTest, GraphOwnsValidatedDataIndependentlyOfItsSource) {
+    auto const source = ExampleGraph();
+    auto const built = gk_compact::BuildGraph(source);
+    auto vertices = built.Metadata().Vertices();
+    auto types = built.Metadata().Types();
+    auto predicates = built.Metadata().Predicates();
+    auto data = built.Data();
+    data.metadata = std::make_shared<gk_compact::GraphMetadata const>(vertices, types, predicates);
+    CompactGraph const graph(data);
+    vertices.labels.clear();
+    types.clear();
+    predicates.clear();
+    data.metadata.reset();
+    data.outgoing.offsets.clear();
+    CheckRepresentation(graph, source);
+    CheckRepresentation(CompactGraph(built.Data()), source);
+    CheckRepresentation(CompactGraph(gk_compact::GraphData{}), {});
+}
+
+TEST(GkCompactGraphTest, MetadataRejectsInvalidVertexDataAndDictionaries) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    auto reject = [&](auto mutate) {
+        auto vertices = graph.Metadata().Vertices();
+        auto types = graph.Metadata().Types();
+        auto predicates = graph.Metadata().Predicates();
+        mutate(vertices, types, predicates);
+        EXPECT_THROW((gk_compact::GraphMetadata(std::move(vertices), std::move(types),
+                                                std::move(predicates))),
+                     std::invalid_argument);
+    };
+    reject([](auto& v, auto&, auto&) { v.types.pop_back(); });
+    reject([](auto& v, auto&, auto&) { v.entity_count = v.labels.size() + 1; });
+    reject([](auto& v, auto&, auto&) { v.labels[0].clear(); });
+    reject([](auto& v, auto&, auto&) { v.labels[1] = v.labels[0]; });
+    reject([](auto& v, auto&, auto&) { std::swap(v.labels[0], v.labels[1]); });
+    reject([](auto& v, auto&, auto&) { v.types[0] = gk_compact::kNoType; });
+    reject([](auto& v, auto& t, auto&) { v.types[0] = static_cast<Id>(t.size()); });
+    reject([](auto& v, auto&, auto&) { v.types.back() = 0; });
+    reject([](auto&, auto& t, auto&) { t[0].clear(); });
+    reject([](auto&, auto& t, auto&) { t[0] = "-"; });
+    reject([](auto&, auto& t, auto&) { t[1] = t[0]; });
+    reject([](auto&, auto& t, auto&) { std::reverse(t.begin(), t.end()); });
+    reject([](auto&, auto&, auto& p) { p[0].clear(); });
+    reject([](auto&, auto&, auto& p) { p[1] = p[0]; });
+    reject([](auto&, auto&, auto& p) { std::reverse(p.begin(), p.end()); });
+}
+
+TEST(GkCompactGraphTest, GraphsShareMetadataButOwnIndependentTopology) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    auto data = graph.Data();
+    data.outgoing.offsets.assign(graph.GetVertexCount() + 1, 0);
+    data.incoming.offsets.assign(graph.GetVertexCount() + 1, 0);
+    data.outgoing.edges.clear();
+    data.incoming.edges.clear();
+    data.input_triple_count = 0;
+    CompactGraph const other(std::move(data));
+    EXPECT_EQ(&other.Metadata(), &graph.Metadata());
+    EXPECT_EQ(other.Data().metadata.get(), graph.Data().metadata.get());
+    EXPECT_EQ(other.GetVertexCount(), graph.GetVertexCount());
+    EXPECT_EQ(other.GetEntityCount(), graph.GetEntityCount());
+    EXPECT_EQ(other.GetEdgeCount(), 0U);
+    EXPECT_EQ(graph.GetEdgeCount(), 3U);
+    for (auto vertex : graph.EntityIds()) {
+        EXPECT_EQ(&other.GetLabel(vertex), &graph.GetLabel(vertex));
+        EXPECT_EQ(other.GetType(vertex), graph.GetType(vertex));
+    }
+    EXPECT_EQ(other.FindEntity("a"), graph.FindEntity("a"));
+    EXPECT_EQ(other.FindValue("Alice"), graph.FindValue("Alice"));
+}
+
+TEST(GkCompactGraphTest, SharedMetadataOutlivesOriginalGraph) {
+    std::weak_ptr<gk_compact::GraphMetadata const> weak;
+    std::optional<CompactGraph> retained;
+    {
+        auto const original = gk_compact::BuildGraph(ExampleGraph());
+        weak = original.Data().metadata;
+        retained.emplace(original.Data());
+        EXPECT_EQ(&retained->Metadata(), &original.Metadata());
+    }
+    ASSERT_FALSE(weak.expired());
+    CheckRepresentation(*retained, ExampleGraph());
+    retained.reset();
+    EXPECT_TRUE(weak.expired());
+}
+
+TEST(GkCompactGraphTest, SparseRowsPreserveOriginalIdsAndSharedMetadata) {
+    CompactGraph const graph(SparseExampleData());
+    auto source = ExampleGraph();
+    source.erase(source.begin() + 1);
+    CheckRepresentation(graph, source);
+    EXPECT_EQ(graph.GetVertexCount(), 3U);
+    EXPECT_EQ(graph.GetEntityCount(), 2U);
+    EXPECT_EQ(graph.Metadata().GetVertexCount(), 4U);
+    EXPECT_EQ(graph.Metadata().GetEntityCount(), 3U);
+    std::vector<Id> vertices;
+    std::ranges::copy(graph.VertexIds(), std::back_inserter(vertices));
+    EXPECT_EQ(vertices, (std::vector<Id>{0, 2, 3}));
+    std::vector<Id> entities;
+    std::ranges::copy(graph.EntityIds(), std::back_inserter(entities));
+    EXPECT_EQ(entities, (std::vector<Id>{0, 2}));
+    EXPECT_EQ(graph.FindEntity("b"), 1U);
+    EXPECT_FALSE(graph.ContainsVertex(1));
+    EXPECT_FALSE(graph.ContainsVertex(gk_compact::kNoType));
+    EXPECT_TRUE(graph.Outgoing(1).empty());
+    EXPECT_TRUE(graph.Incoming(1, 1).empty());
+    EXPECT_TRUE(graph.Outgoing(gk_compact::kNoType, 0).empty());
+    EXPECT_TRUE(graph.Incoming(gk_compact::kNoType).empty());
+    EXPECT_FALSE(graph.HasEdge(1, 1, 2));
+    EXPECT_FALSE(graph.HasEdge(0, 1, 1));
+    EXPECT_TRUE(graph.HasEdge(0, 0, 3));
+    EXPECT_EQ(graph.GetLabel(3), "Alice");
+}
+
+TEST(GkCompactGraphTest, EmptyMappingSupportsFullEmptyAndDensePrefixGraphs) {
+    auto const full = gk_compact::BuildGraph(ExampleGraph());
+    EXPECT_TRUE(full.Data().row_to_vertex.empty());
+    EXPECT_EQ(full.GetVertexCount(), 4U);
+    for (std::size_t rows : {0U, 2U, 4U}) {
+        SCOPED_TRACE(rows);
+        gk_compact::GraphData data;
+        data.metadata = full.Data().metadata;
+        data.outgoing.offsets.assign(rows + 1, 0);
+        data.incoming.offsets.assign(rows + 1, 0);
+        CompactGraph const graph(std::move(data));
+        CheckRepresentation(graph, {});
+        EXPECT_EQ(graph.GetVertexCount(), rows);
+        EXPECT_EQ(graph.GetEntityCount(), std::min(rows, full.GetEntityCount()));
+        EXPECT_EQ(&graph.Metadata(), &full.Metadata());
+        EXPECT_FALSE(graph.ContainsVertex(static_cast<Id>(rows)));
+        EXPECT_EQ(std::ranges::distance(graph.VertexIds()), rows);
+        EXPECT_EQ(std::ranges::distance(graph.EntityIds()), graph.GetEntityCount());
+    }
+}
+
+TEST(GkCompactGraphTest, ConstructorRejectsInvalidSparseRowMappings) {
+    for (std::vector<Id> const& mapping :
+         {std::vector<Id>{0, 2}, {0, 2, 3, 4}, {0, 3, 2}, {0, 2, 2}, {0, 2, 4}}) {
+        auto data = SparseExampleData();
+        data.row_to_vertex = mapping;
+        EXPECT_THROW((CompactGraph(std::move(data))), std::invalid_argument);
+    }
+    auto data = SparseExampleData();
+    data.row_to_vertex.clear();
+    EXPECT_THROW((CompactGraph(std::move(data))), std::invalid_argument);
+}
+
+TEST(GkCompactGraphTest, SparseCsrRejectsInactiveNeighborsAndMappedValueSubjects) {
+    auto data = SparseExampleData();
+    data.outgoing.edges[0].neighbor = 1;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data = SparseExampleData();
+    data.incoming.edges[0].neighbor = 1;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data = SparseExampleData();
+    data.incoming.offsets.pop_back();
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+
+    // Both CSR directions agree, but local row 1 is original value ID 3.
+    data = {};
+    data.metadata = SparseExampleData().metadata;
+    data.row_to_vertex = {0, 3};
+    data.outgoing = {{0, 0, 1}, {{0, 0}}};
+    data.incoming = {{0, 1, 1}, {{0, 3}}};
+    data.input_triple_count = 1;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+}
+
+TEST(GkCompactGraphTest, MovesLeaveReadableEmptyGraphsAndPreserveMetadata) {
+    auto const full = gk_compact::BuildGraph(ExampleGraph());
+    for (auto data : {full.Data(), SparseExampleData()}) {
+        CompactGraph source(std::move(data));
+        auto const expected = Expand(source);
+        auto const* metadata = &source.Metadata();
+        CompactGraph destination(std::move(source));
+        CheckRepresentation(destination, expected);
+        CheckRepresentation(source, {});
+        EXPECT_EQ(&source.Metadata(), metadata);
+        EXPECT_EQ(&destination.Metadata(), metadata);
+        EXPECT_FALSE(source.ContainsVertex(0));
+        EXPECT_FALSE(source.ContainsVertex(gk_compact::kNoType));
+        EXPECT_TRUE(source.Outgoing(0).empty());
+        EXPECT_TRUE(source.Incoming(0).empty());
+        EXPECT_FALSE(source.HasEdge(0, 0, 0));
+        CheckRepresentation(CompactGraph(source.Data()), {});
+
+        source = std::move(destination);
+        CheckRepresentation(source, expected);
+        CheckRepresentation(destination, {});
+        destination = source;
+        CheckRepresentation(destination, expected);
+        EXPECT_EQ(&destination.Metadata(), metadata);
+        // Alias the object so this also checks self-assignment without warnings.
+        auto* alias = &source;
+        source = std::move(*alias);
+        CheckRepresentation(source, expected);
+        source = *alias;
+        CheckRepresentation(source, expected);
+    }
+}
+
+TEST(GkCompactGraphTest, RawCsrQueriesUseLocalRowsNotOriginalVertexIds) {
+    auto data = SparseExampleData();
+    data.row_to_vertex = {1, 2};
+    data.outgoing = {{0, 1, 1}, {{1, 2}}};
+    data.incoming = {{0, 0, 1}, {{1, 1}}};
+    data.input_triple_count = 1;
+    CompactGraph const graph(std::move(data));
+    EXPECT_EQ(Copy(graph.Outgoing(1)), Copy(gk_compact::AdjacentRow(graph.Data().outgoing, 0)));
+    EXPECT_TRUE(graph.Outgoing(0).empty());
+    EXPECT_TRUE(gk_compact::AdjacentRow(graph.Data().outgoing, 1).empty());
+    EXPECT_TRUE(gk_compact::ContainsAtRow(graph.Data().outgoing, 0, 1, 2));
+    EXPECT_TRUE(graph.HasEdge(1, 1, 2));
+}
+
+TEST(GkCompactGraphTest, ConstructorRejectsNullAndIncompatibleMetadata) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    auto data = graph.Data();
+    data.metadata.reset();
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data.metadata = std::make_shared<gk_compact::GraphMetadata const>();
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data.metadata = std::make_shared<gk_compact::GraphMetadata const>(
+            graph.Metadata().Vertices(), graph.Metadata().Types(), std::vector<std::string>{});
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+}
+
+TEST(GkCompactGraphTest, ConstructorRejectsInvalidCsrBeforeUsingOffsetsOrIds) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    for (bool const incoming : {false, true}) {
+        SCOPED_TRACE(incoming);
+        auto reject = [&](auto mutate) {
+            auto data = graph.Data();
+            mutate(incoming ? data.incoming : data.outgoing);
+            EXPECT_THROW((CompactGraph(std::move(data))), std::invalid_argument);
+        };
+        reject([](auto& index) { index.offsets.clear(); });
+        reject([](auto& index) { index.offsets.pop_back(); });
+        reject([](auto& index) { index.offsets.front() = 1; });
+        reject([](auto& index) { ++index.offsets.back(); });
+        reject([](auto& index) {
+            index.offsets[1] = std::numeric_limits<gk_compact::Offset>::max();
+        });
+        reject([](auto& index) { index.edges.front().neighbor = gk_compact::kNoType; });
+        reject([](auto& index) { index.edges.front().predicate = gk_compact::kNoType; });
+        reject([&](auto& index) {
+            auto const vertex =
+                    *gk_compact::FindEntity(graph.Metadata().Vertices(), incoming ? "c" : "a");
+            std::swap(index.edges[index.offsets[vertex]], index.edges[index.offsets[vertex] + 1]);
+        });
+        reject([&](auto& index) {
+            auto const vertex =
+                    *gk_compact::FindEntity(graph.Metadata().Vertices(), incoming ? "c" : "a");
+            index.edges[index.offsets[vertex] + 1] = index.edges[index.offsets[vertex]];
+        });
+    }
+}
+
+TEST(GkCompactGraphTest, ConstructorRejectsDisagreeingDirectionsAndValueSubjects) {
+    auto const graph = gk_compact::BuildGraph(ExampleGraph());
+    auto data = graph.Data();
+    data.input_triple_count = 0;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data = graph.Data();
+    data.incoming.edges.pop_back();
+    --data.incoming.offsets.back();
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+    data = graph.Data();
+    auto const value = *graph.FindValue("Alice");
+    data.incoming.edges[data.incoming.offsets[value]].neighbor = 1;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+
+    // Both indexes agree and IDs are valid, but a value cannot be a subject.
+    data = {};
+    data.metadata = std::make_shared<gk_compact::GraphMetadata const>(
+            gk_compact::VertexData{{"a", "v"}, {0, gk_compact::kNoType}, 1},
+            std::vector<std::string>{"Person"}, std::vector<std::string>{"p"});
+    data.outgoing = {{0, 0, 1}, {{0, 0}}};
+    data.incoming = {{0, 1, 1}, {{0, 1}}};
+    data.input_triple_count = 1;
+    EXPECT_THROW((CompactGraph(data)), std::invalid_argument);
+}

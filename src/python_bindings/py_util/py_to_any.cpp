@@ -22,6 +22,7 @@
 #include "core/algorithms/fd/afd_metric/afd_metric.h"
 #include "core/algorithms/gdd/gdd.h"
 #include "core/algorithms/gk/model/key.h"
+#include "core/algorithms/gk_compact/model/graph.h"
 #include "core/algorithms/md/hymd/enums.h"
 #include "core/algorithms/md/hymd/hymd.h"
 #include "core/algorithms/md/md_verifier/column_similarity_classifier.h"
@@ -233,6 +234,7 @@ std::unordered_map<std::type_index, ConvFunc> const kConverters{
         kNormalConvPair<long double>,
         kNormalConvPair<std::vector<unsigned int>>,
         kNormalConvPair<gk::model::Graph>,
+        kNormalConvPair<std::shared_ptr<gk_compact::Graph const>>,
         kNormalConvPair<gk::model::GraphKeyDescriptor>,
         kNormalConvPair<std::vector<gk::model::GraphKeyDescriptor>>,
         kNormalConvPair<unsigned short>,

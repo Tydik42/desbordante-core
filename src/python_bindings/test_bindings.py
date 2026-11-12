@@ -1,3 +1,4 @@
+import gc
 import pathlib
 import pickle
 import tempfile
@@ -281,6 +282,18 @@ class TestGkBindings(unittest.TestCase):
              {"gk_graph": graph, "gk_keys": [key]},
              {"gk_graph": []}, {"gk_keys": []}),
         ]
+        if getattr(verification, "compact_validator_available", False):
+            cases.append((
+                verification.algorithms.CompactGkValidator,
+                {"gk_graph": verification.CompactGraph.from_triples(graph), "gk_key": key},
+                {"gk_graph": verification.CompactGraph.from_triples([])}, {"gk_key": other_key},
+            ))
+        if getattr(deduplication, "compact_deduplicator_available", False):
+            cases.append((
+                deduplication.algorithms.CompactGkDeduplicator,
+                {"gk_graph": verification.CompactGraph.from_triples(graph), "gk_keys": [key]},
+                {"gk_graph": verification.CompactGraph.from_triples([])}, {"gk_keys": []},
+            ))
         return cases
 
     @staticmethod
@@ -459,6 +472,243 @@ class TestGkBindings(unittest.TestCase):
                 algorithm.execute(use_localization=True, use_pairing_filter=True,
                                   use_subgraph_reduction=True)
 
+    def test_gk_compact_standalone_optimizations_own_results_and_share_api(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        ops = gk.optimizations
+        self.assertIs(ops, desb.gk_deduplication.optimizations)
+        graph = gk.CompactGraph.from_triples(source)
+        first = ops.localize(graph, "a", 1)
+        second = ops.localize(graph, "b", 1)
+        self.assertEqual((first.vertex_count, first.edge_count), (2, 1))
+        self.assertEqual({node.id_or_val for node in first.get_vertices()}, {"a", "a_target"})
+        pairing = ops.compute_pairing(key, first, second)
+        self.assertTrue(pairing.can_pair("a", "b"))
+        self.assertFalse(pairing.can_pair("b", "a"))
+        self.assertEqual(pairing.pair_count, 2)
+        self.assertEqual(pairing.candidate_count(key.root), 1)
+        self.assertEqual([(a.id_or_val, b.id_or_val) for a, b in pairing.get_candidates(key.root)],
+                         [("a", "b")])
+        del graph, first, second
+        gc.collect()
+        reduced = ops.reduce_subgraphs(pairing)
+        del pairing
+        gc.collect()
+        self.assertEqual([(g.vertex_count, g.edge_count) for g in reduced], [(2, 1), (2, 1)])
+        self.assertEqual({node.id_or_val for node in reduced[1].get_vertices()}, {"b", "b_target"})
+        validator = gk.algorithms.CompactGkValidator()
+        validator.load_data(gk_graph=reduced[0], gk_key=key)
+        validator.execute(use_localization=True)
+        self.assertTrue(validator.holds)
+
+    def test_gk_compact_standalone_optimizations_handle_empty_and_invalid_inputs(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        ops = gk.optimizations
+        graph = gk.CompactGraph.from_triples(source)
+        isolated = ops.localize(graph, "a", 0)
+        self.assertEqual((isolated.vertex_count, isolated.edge_count), (1, 0))
+        pairing = ops.compute_pairing(key, isolated, isolated)
+        self.assertEqual(pairing.pair_count, 0)
+        self.assertFalse(pairing.can_pair("a", "a"))
+        self.assertEqual(pairing.get_candidates(key.root), [])
+        self.assertEqual([(g.vertex_count, g.edge_count) for g in ops.reduce_subgraphs(pairing)],
+                         [(0, 0), (0, 0)])
+        with self.assertRaises(ValueError):
+            ops.localize(isolated, "b", 1)
+        with self.assertRaises(ValueError):
+            ops.localize(graph, "absent", 1)
+        with self.assertRaises(TypeError):
+            ops.localize(None, "a", 1)
+        with self.assertRaises(TypeError):
+            ops.compute_pairing(key, None, graph)
+        with self.assertRaises(ValueError):
+            ops.compute_pairing(key, graph, gk.CompactGraph.from_triples(source))
+        with self.assertRaises(ValueError):
+            pairing.candidate_count(gk.Variable(gk.VarKind.ENTITY, "unknown"))
+        missing = gk.GraphKey([gk.PatternTriple(key.root, "absent", key.pattern[0].object)],
+                              key.types, key.root)
+        no_matches = ops.compute_pairing(missing, graph, graph)
+        self.assertEqual(no_matches.candidate_count(key.root), 0)
+        self.assertFalse(no_matches.can_pair("a", "b"))
+        self.assertEqual([g.vertex_count for g in ops.reduce_subgraphs(no_matches)], [0, 0])
+
+    def test_gk_compact_standalone_pairing_supports_values_constants_and_wildcards(self):
+        gk = desb.gk_verification
+        x = gk.Variable(gk.VarKind.ENTITY, "x")
+        w = gk.Variable(gk.VarKind.WILDCARD, "w")
+        for kind in (gk.VarKind.VALUE, gk.VarKind.CONSTANT):
+            value = gk.Variable(kind, "Alice")
+            source = []
+            for root, company in (("a", "c0"), ("b", "c1")):
+                node = gk.Node(gk.NodeKind.ENTITY, root, "Person")
+                source.append(gk.Triple(node, "name", gk.Node(gk.NodeKind.VALUE, "Alice")))
+                source.append(gk.Triple(node, "worksAt", gk.Node(gk.NodeKind.ENTITY, company, "Company")))
+            graph = gk.CompactGraph.from_triples(source)
+            key = gk.GraphKey([gk.PatternTriple(x, "name", value), gk.PatternTriple(x, "worksAt", w)],
+                              {x: "Person", w: "Company"}, x)
+            pairing = gk.optimizations.compute_pairing(key, graph, graph)
+            self.assertTrue(pairing.can_pair("a", "b"))
+            values = pairing.get_candidates(value)
+            self.assertEqual(len(values), 1)
+            self.assertEqual(values[0][0].kind, gk.NodeKind.VALUE)
+            self.assertEqual(values[0][0].id_or_val, "Alice")
+            self.assertEqual(values[0][1].id_or_val, "Alice")
+
+    def test_gk_compact_graph_ownership_csv_and_validator(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        source.append(gk.Triple(gk.Node(gk.NodeKind.ENTITY, "c", "X"),
+                                "unrelated", gk.Node(gk.NodeKind.VALUE, "other")))
+        graph = gk.CompactGraph.from_triples(iter(source))
+        self.assertIs(desb.gk_deduplication.CompactGraph, gk.CompactGraph)
+        validator = gk.algorithms.CompactGkValidator()
+        self.assertFalse(hasattr(validator, "timing_stats"))
+        with self.assertRaises(RuntimeError):
+            _ = validator.holds
+        validator.load_data(gk_graph=graph, gk_key=key)
+        self.assertIs(validator.get_opts()["gk_graph"], graph)
+        self.assertEqual(validator._get_option_type("gk_graph"), (gk.CompactGraph,))
+        self.assertEqual(graph.edge_count, len(source))
+        with self.assertRaises(AttributeError):
+            graph.edge_count = 0
+        del graph
+        gc.collect()
+        modes = ({}, {"use_localization": True},
+                 {"use_localization": True, "use_pairing_filter": True},
+                 {"use_subgraph_reduction": True, "use_pairing_filter": True,
+                  "use_localization": True}, {})
+        for options in modes:
+            validator.execute(**options)
+            self.assertFalse(validator.holds)
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+        with self.assertRaises(ValueError):
+            validator.execute(use_localization=False, use_pairing_filter=True)
+        with self.assertRaises(ValueError):
+            validator.execute(use_localization=True, use_pairing_filter=False,
+                              use_subgraph_reduction=True)
+        validator.execute(use_localization=True)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        validator.execute()
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        with self.assertRaises(ValueError):
+            gk.algorithms.CompactGkValidator().load_data(gk_graph=None, gk_key=key)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            header = ("subject_id,subject_type,predicate,object_kind,"
+                      "object_id_or_value,object_type\n")
+            path.write_text(header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n")
+            for options in ({"gk_graph": gk.CompactGraph.from_csv(path)},
+                            {"gk_graph_path": path}):
+                loaded = gk.algorithms.CompactGkValidator()
+                loaded.load_data(gk_key=key, **options)
+                for mode in modes:
+                    loaded.execute(**mode)
+                    self.assertEqual(loaded.get_violations(), [("a", "b")])
+            path.write_text(header)
+            loaded = gk.algorithms.CompactGkValidator()
+            loaded.load_data(gk_graph_path=path, gk_key=key)
+            for mode in modes:
+                loaded.execute(**mode)
+                self.assertTrue(loaded.holds)
+                self.assertEqual(loaded.get_violations(), [])
+            for subject_type, object_type in (("-", "Y"), ("X", "-")):
+                with self.subTest(subject_type=subject_type, object_type=object_type):
+                    path.write_text(header + f"a,{subject_type},p,entity,b,{object_type}\n")
+                    with self.assertRaises(RuntimeError):
+                        gk.CompactGraph.from_csv(path)
+                    invalid = [gk.Triple(gk.Node(gk.NodeKind.ENTITY, "a", subject_type),
+                                         "p", gk.Node(gk.NodeKind.ENTITY, "b", object_type))]
+                    with self.assertRaises(ValueError):
+                        gk.CompactGraph.from_triples(invalid)
+
+
+    def test_gk_compact_options_follow_dependencies(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        validator = gk.algorithms.CompactGkValidator()
+        validator.load_data(gk_graph=gk.CompactGraph.from_triples(source), gk_key=key)
+        localization = "use_localization"
+        pairing = "use_pairing_filter"
+        reduction = "use_subgraph_reduction"
+        for name in (localization, pairing, reduction):
+            self.assertIn(name, validator.get_possible_options())
+            self.assertEqual(validator._get_option_type(name), (bool,))
+            self.assertTrue(validator.get_description(name))
+        self.assertEqual(validator._get_needed_options(), {localization})
+        with self.assertRaises(ValueError):
+            validator._set_option(pairing, True)
+        validator._set_option(localization, True)
+        self.assertEqual(validator._get_needed_options(), {pairing})
+        validator._set_option(pairing, True)
+        self.assertEqual(validator._get_needed_options(), {reduction})
+        validator._set_option(reduction, True)
+        self.assertEqual(validator._get_needed_options(), set())
+        validator._set_option(localization, False)
+        self.assertEqual(validator._get_needed_options(), set())
+        with self.assertRaises(ValueError):
+            validator._set_option(reduction, True)
+        validator.execute()
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        self.assertEqual(validator._get_needed_options(), {localization})
+        # ConfigureAlgo must activate parents before children, regardless of
+        # keyword insertion order. False inactive options remain harmless.
+        validator.execute(use_subgraph_reduction=True, use_pairing_filter=True,
+                          use_localization=True)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+        validator.execute(use_subgraph_reduction=False, use_pairing_filter=False,
+                          use_localization=False)
+        self.assertEqual(validator.get_violations(), [("a", "b")])
+
+    def test_gk_compact_rejects_execution_after_failed_reload(self):
+        _, key = self.make_graph_and_key()
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            header = ("subject_id,subject_type,predicate,object_kind,"
+                      "object_id_or_value,object_type\n")
+            csv = header + "a,X,p,entity,a_target,Y\nb,X,p,entity,b_target,Y\n"
+            path.write_text(csv)
+            validator = desb.gk_verification.algorithms.CompactGkValidator()
+            validator.load_data(gk_graph_path=path, gk_key=key)
+            validator.execute()
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+            path.write_text("invalid CSV\n")
+            with self.assertRaises(RuntimeError):
+                validator.load_data()
+            with self.assertRaises(RuntimeError):
+                validator.execute()
+            with self.assertRaises(RuntimeError):
+                _ = validator.holds
+            path.write_text(header)
+            validator.load_data()
+            validator.execute()
+            self.assertTrue(validator.holds)
+            path.write_text(csv)
+            validator.load_data()
+            validator.execute(use_localization=True, use_pairing_filter=True,
+                              use_subgraph_reduction=True)
+            self.assertEqual(validator.get_violations(), [("a", "b")])
+
+    def test_gk_implementations_share_option_contract(self):
+        graph, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        plain = gk.algorithms.GkValidator()
+        compact = gk.algorithms.CompactGkValidator()
+        plain.load_data(gk_graph=graph, gk_key=key)
+        compact.load_data(gk_graph=gk.CompactGraph.from_triples(graph), gk_key=key)
+        for name in ("use_localization", "use_pairing_filter", "use_subgraph_reduction"):
+            self.assertEqual(plain.get_description(name), compact.get_description(name))
+            self.assertEqual(plain._get_option_type(name), compact._get_option_type(name))
+        for localization, pairing, reduction in ((False, False, False), (True, False, False),
+                                                  (True, True, False), (True, True, True),
+                                                  (False, False, False)):
+            for algorithm in (plain, compact):
+                algorithm.execute(use_subgraph_reduction=reduction, use_pairing_filter=pairing,
+                                  use_localization=localization)
+                self.assertEqual(algorithm._get_needed_options(), {"use_localization"})
+            self.assertEqual(plain.get_violations(), compact.get_violations())
+
     def test_gk_optimizations_preserve_results(self):
         graph, key = self.make_graph_and_key()
         gk = desb.gk_verification
@@ -524,6 +774,91 @@ class TestGkDeduplicationBindings(unittest.TestCase):
             gk.Triple(entity("c2", "Z"), "code", gk.Node(gk.NodeKind.VALUE, "shared")),
         ]
         return graph, [entity_key, value_key]
+
+    def test_compact_chase_reaches_fixed_point_with_all_optimizations(self):
+        module = desb.gk_deduplication
+        self.assertTrue(module.compact_deduplicator_available)
+        self.assertIs(module.algorithms.Default, module.algorithms.GkDeduplicator)
+        graph, keys = self.make_graph_and_keys()
+        algorithm = module.algorithms.CompactGkDeduplicator()
+        self.assertEqual(algorithm._get_option_type("gk_graph"), (module.CompactGraph,))
+        self.assertEqual(algorithm._get_option_type("gk_keys"), (list, module.GraphKey))
+        with self.assertRaises(RuntimeError):
+            algorithm.get_clusters()
+        algorithm.load_data(gk_graph=module.CompactGraph.from_triples(graph), gk_keys=keys)
+        gc.collect()
+        for options in ({}, {"use_localization": True},
+                        {"use_localization": True, "use_pairing_filter": True},
+                        {"use_localization": True, "use_pairing_filter": True,
+                         "use_subgraph_reduction": True}, {}):
+            algorithm.execute(**options)
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            self.assertEqual(algorithm.cluster_count, 2)
+            self.assertEqual(algorithm.merge_count, 2)
+            self.assertEqual(algorithm.get_opts()["gk_graph"].edge_count, len(graph))
+            clusters = algorithm.get_clusters()
+            clusters[0].clear()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_compact_chase_loads_csv_and_rejects_execution_after_failed_reload(self):
+        module = desb.gk_deduplication
+        _, keys = self.make_graph_and_keys()
+        header = ("subject_id,subject_type,predicate,object_kind,"
+                  "object_id_or_value,object_type\n")
+        csv = header + ("a,A,p,entity,c1,Z\nb,A,p,entity,c2,Z\n"
+                        "c1,Z,code,value,shared,-\nc2,Z,code,value,shared,-\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "graph.csv"
+            path.write_text(csv)
+            algorithm = module.algorithms.CompactGkDeduplicator()
+            algorithm.load_data(gk_graph_path=path, gk_keys=keys)
+            algorithm.execute(use_localization=True, use_pairing_filter=True,
+                              use_subgraph_reduction=True)
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+            path.write_text("invalid CSV\n")
+            with self.assertRaises(RuntimeError):
+                algorithm.load_data()
+            with self.assertRaises(RuntimeError):
+                algorithm.execute()
+            with self.assertRaises(RuntimeError):
+                algorithm.get_clusters()
+            path.write_text(header)
+            algorithm.load_data()
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [])
+            self.assertEqual(algorithm.merge_count, 0)
+            path.write_text(csv)
+            algorithm.load_data()
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), [["a", "b"], ["c1", "c2"]])
+
+    def test_compact_chase_preserves_singletons_and_checks_every_key(self):
+        module = desb.gk_deduplication
+        graph, keys = self.make_graph_and_keys()
+        key = keys[0]
+        absent = module.GraphKey(
+            [module.PatternTriple(key.root, "absent", key.pattern[0].object)],
+            key.types, key.root,
+        )
+        for source, input_keys, expected in (
+                (graph, [], [["a"], ["b"], ["c1"], ["c2"]]),
+                (graph, [absent], [["a"], ["b"], ["c1"], ["c2"]]),
+                (graph, [absent, *keys], [["a", "b"], ["c1", "c2"]]),
+                ([], keys, [])):
+            algorithm = module.algorithms.CompactGkDeduplicator()
+            algorithm.load_data(gk_graph=module.CompactGraph.from_triples(source),
+                                gk_keys=input_keys)
+            algorithm.execute()
+            self.assertEqual(algorithm.get_clusters(), expected)
+        invalid = module.GraphKey(
+            key.pattern, key.types, module.Variable(module.VarKind.ENTITY, "absent"),
+        )
+        algorithm = module.algorithms.CompactGkDeduplicator()
+        with self.assertRaises(ValueError):
+            algorithm.load_data(gk_graph=module.CompactGraph.from_triples([]),
+                                gk_keys=[absent, invalid])
+        with self.assertRaises(RuntimeError):
+            algorithm.get_clusters()
 
     def test_shared_descriptors_clusters_and_repeated_execution(self):
         module = desb.gk_deduplication

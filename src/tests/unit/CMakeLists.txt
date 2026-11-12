@@ -455,6 +455,40 @@ desbordante_add_test(
 
 # --- GK ---
 desbordante_add_test(
+    gk_compact.deduplicator
+    SRCS test_gk_compact_deduplicator.cpp
+    LIBS ${DESBORDANTE_PREFIX}::gk_compact::deduplicator
+         ${DESBORDANTE_PREFIX}::gk_compact::chase
+         ${DESBORDANTE_PREFIX}::gk_compact::key
+         ${DESBORDANTE_PREFIX}::gk::chase
+         ${DESBORDANTE_PREFIX}::config
+         spdlog::spdlog_header_only
+         Boost::headers
+)
+
+desbordante_add_test(
+    gk_compact.validator
+    SRCS test_gk_compact_validator.cpp
+    LIBS ${DESBORDANTE_PREFIX}::gk_compact::validator
+         ${DESBORDANTE_PREFIX}::gk_compact::graph
+         ${DESBORDANTE_PREFIX}::gk_compact::key
+         ${DESBORDANTE_PREFIX}::gk_compact::eval
+         ${DESBORDANTE_PREFIX}::gk_compact::optimizations
+         spdlog::spdlog_header_only
+         Boost::headers
+)
+
+desbordante_add_test(
+    gk_compact.graph
+    SRCS
+    test_gk_compact_graph.cpp
+    LIBS
+    ${DESBORDANTE_PREFIX}::gk_compact::graph
+    ${DESBORDANTE_PREFIX}::gk_compact::parser
+    ${DESBORDANTE_PREFIX}::gk::parser
+)
+
+desbordante_add_test(
     gk.validator
     SRCS
     test_gk_validator.cpp
