@@ -116,7 +116,10 @@ TEST(GkCompactDeduplicatorTest, ReachesFixedPointAndResetsEquivalenceOnEveryRun)
     auto graph = DependentGraph();
     graph.push_back({Entity("lonely", "A"), "note", Value("only")});
     auto const numeric_graph = compact::BuildGraph(graph);
-    compact::ChaseEngine const engine(BuildKeys({EntityKey(), ValueKey()}, numeric_graph));
+    // The first key has an empty local value domain. The same pairing buffers
+    // must then serve an entity key and a value key, across multiple Eq updates.
+    compact::ChaseEngine const engine(
+            BuildKeys({ValueKey("A"), EntityKey(), ValueKey()}, numeric_graph));
     for (auto const [localization, pairing, reduction] : kModes) {
         auto const result = engine.Run(numeric_graph, localization, pairing, reduction);
         EXPECT_EQ(Decode(numeric_graph, result), (Clusters{{"a", "b"}, {"c1", "c2"}, {"lonely"}}));
@@ -128,6 +131,33 @@ TEST(GkCompactDeduplicatorTest, ReachesFixedPointAndResetsEquivalenceOnEveryRun)
     graph.push_back(graph.front());
     std::reverse(graph.begin(), graph.end());
     ExpectMatchesString(graph, {ValueKey(), EntityKey(), ValueKey()});
+}
+
+TEST(GkCompactDeduplicatorTest, SharesNeighborhoodsAcrossKeysWithDifferentEligibleRootsAndRadii) {
+    Graph const graph{{Entity("a"), "p", Entity("c", "Y")},
+                      {Entity("b"), "p", Entity("d", "Y")},
+                      {Entity("e"), "q", Entity("c", "Y")},
+                      {Entity("f"), "q", Entity("d", "Y")},
+                      {Entity("c", "Y"), "code", Value("shared")},
+                      {Entity("d", "Y"), "code", Value("shared")},
+                      {Entity("isolated"), "note", Value("only")}};
+    auto const p_key = EntityKey("X", "Y");
+    auto q_key = p_key;
+    q_key.Q.front().predicate = "q";
+    auto deep_key = p_key;
+    Variable const value{VarKind::kValue, "code"};
+    deep_key.Q.push_back({deep_key.Q.front().object, "code", value});
+    std::vector<GraphKeyDescriptor> const keys{p_key, q_key, deep_key, ValueKey("Y")};
+    auto const numeric_graph = compact::BuildGraph(graph);
+    compact::ChaseEngine const engine(BuildKeys(keys, numeric_graph));
+    for (auto const [localization, pairing, reduction] : kModes) {
+        auto const result = engine.Run(numeric_graph, localization, pairing, reduction);
+        EXPECT_EQ(Decode(numeric_graph, result),
+                  (Clusters{{"a", "b"}, {"c", "d"}, {"e", "f"}, {"isolated"}}));
+        EXPECT_EQ(result.merge_count, 3U);
+    }
+    ExpectMatchesString(graph, keys);
+    ExpectMatchesString(graph, {ValueKey("Y"), deep_key, q_key, p_key, p_key});
 }
 
 TEST(GkCompactDeduplicatorTest, PreservesOriginalVertexInjectivityAfterMerges) {
