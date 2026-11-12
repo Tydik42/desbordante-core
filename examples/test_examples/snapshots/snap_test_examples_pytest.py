@@ -7092,3 +7092,222 @@ entire table.
 In conclusion, we've learned about SDs and how to verify them in
 your own datasets. Now, let's experiment with your own data!
 '''
+
+snapshots['test_example[basic/verifying_gk.py-None-verifying_gk_output] verifying_gk_output'] = '''Default algorithm: GkValidator
+Compact validator available: True
+In-memory triples:
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="worksAt", object=Node(kind=kEntity, id_or_val="company", type="Company"))
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="name", object=Node(kind=kValue, id_or_val="Alex", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="livesIn", object=Node(kind=kEntity, id_or_val="city1", type="City"))
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="status", object=Node(kind=kValue, id_or_val="active", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="note", object=Node(kind=kValue, id_or_val="a", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="worksAt", object=Node(kind=kEntity, id_or_val="company", type="Company"))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="name", object=Node(kind=kValue, id_or_val="Alex", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="livesIn", object=Node(kind=kEntity, id_or_val="city2", type="City"))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="status", object=Node(kind=kValue, id_or_val="active", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="note", object=Node(kind=kValue, id_or_val="b", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="worksAt", object=Node(kind=kEntity, id_or_val="company", type="Company"))
+Compact graph: CompactGraph(vertices=9, entities=5, edges=10, input_triples=11)
+Counts: 9 5 10 11
+Vertex: NodeKind.ENTITY a 'Person'
+Vertex: NodeKind.ENTITY b 'Person'
+Vertex: NodeKind.ENTITY city1 'City'
+Vertex: NodeKind.ENTITY city2 'City'
+Vertex: NodeKind.ENTITY company 'Company'
+Vertex: NodeKind.VALUE Alex ''
+Vertex: NodeKind.VALUE a ''
+Vertex: NodeKind.VALUE active ''
+Vertex: NodeKind.VALUE b ''
+Key: All variable kinds
+GraphKey(root=Variable(kind=kEntity, name="x"), pattern=[PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="livesIn", object=Variable(kind=kWildcard, name="w")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="name", object=Variable(kind=kValue, name="z")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="status", object=Variable(kind=kConstant, name="active")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="worksAt", object=Variable(kind=kEntity, name="y"))], types={Variable(kind=kEntity, name="x"): "Person", Variable(kind=kEntity, name="y"): "Company", Variable(kind=kWildcard, name="w"): "City"})
+Root: x VarKind.ENTITY
+Types: [('w', 'City'), ('x', 'Person'), ('y', 'Company')]
+Pattern: x worksAt y
+Pattern: x name z
+Pattern: x livesIn w
+Pattern: x status active
+Algorithm: GkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: False violations: [('a', 'b')]
+L holds: False violations: [('a', 'b')]
+L+P holds: False violations: [('a', 'b')]
+L+P+R holds: False violations: [('a', 'b')]
+Algorithm: CompactGkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: False violations: [('a', 'b')]
+L holds: False violations: [('a', 'b')]
+L+P holds: False violations: [('a', 'b')]
+L+P+R holds: False violations: [('a', 'b')]
+Key: Distinct cities
+GraphKey(root=Variable(kind=kEntity, name="x"), pattern=[PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="livesIn", object=Variable(kind=kEntity, name="y"))], types={Variable(kind=kEntity, name="x"): "Person", Variable(kind=kEntity, name="y"): "City"})
+Root: x VarKind.ENTITY
+Types: [('x', 'Person'), ('y', 'City')]
+Pattern: x livesIn y
+Algorithm: GkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: True violations: []
+L holds: True violations: []
+L+P holds: True violations: []
+L+P+R holds: True violations: []
+Algorithm: CompactGkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: True violations: []
+L holds: True violations: []
+L+P holds: True violations: []
+L+P+R holds: True violations: []
+Key: Missing predicate
+GraphKey(root=Variable(kind=kEntity, name="x"), pattern=[PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="absent", object=Variable(kind=kValue, name="z"))], types={Variable(kind=kEntity, name="x"): "Person"})
+Root: x VarKind.ENTITY
+Types: [('x', 'Person')]
+Pattern: x absent z
+Algorithm: GkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: True violations: []
+L holds: True violations: []
+L+P holds: True violations: []
+L+P+R holds: True violations: []
+Algorithm: CompactGkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: True violations: []
+L holds: True violations: []
+L+P holds: True violations: []
+L+P+R holds: True violations: []
+Neighborhoods: CompactGraph(vertices=6, entities=3, edges=5, input_triples=5) CompactGraph(vertices=6, entities=3, edges=5, input_triples=5)
+Pairable: True pairs: 5
+Candidates: Variable(kind=kEntity, name="x") 1 [(Node(kind=kEntity, id_or_val="a", type="Person"), Node(kind=kEntity, id_or_val="b", type="Person"))]
+Candidates: Variable(kind=kEntity, name="y") 1 [(Node(kind=kEntity, id_or_val="company", type="Company"), Node(kind=kEntity, id_or_val="company", type="Company"))]
+Candidates: Variable(kind=kValue, name="z") 1 [(Node(kind=kValue, id_or_val="Alex", type=""), Node(kind=kValue, id_or_val="Alex", type=""))]
+Candidates: Variable(kind=kWildcard, name="w") 1 [(Node(kind=kEntity, id_or_val="city1", type="City"), Node(kind=kEntity, id_or_val="city2", type="City"))]
+Candidates: Variable(kind=kConstant, name="active") 1 [(Node(kind=kValue, id_or_val="active", type=""), Node(kind=kValue, id_or_val="active", type=""))]
+Reduced graph 1 CompactGraph(vertices=5, entities=3, edges=4, input_triples=4)
+Vertices: [Node(kind=kEntity, id_or_val="a", type="Person"), Node(kind=kEntity, id_or_val="city1", type="City"), Node(kind=kEntity, id_or_val="company", type="Company"), Node(kind=kValue, id_or_val="Alex", type=""), Node(kind=kValue, id_or_val="active", type="")]
+Reduced graph 2 CompactGraph(vertices=5, entities=3, edges=4, input_triples=4)
+Vertices: [Node(kind=kEntity, id_or_val="b", type="Person"), Node(kind=kEntity, id_or_val="city2", type="City"), Node(kind=kEntity, id_or_val="company", type="Company"), Node(kind=kValue, id_or_val="Alex", type=""), Node(kind=kValue, id_or_val="active", type="")]
+CSV graph: simple_graph.csv
+subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type
+a,X,p,entity,shared,Y
+b,X,p,entity,shared,Y
+Algorithm: GkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: False violations: [('a', 'b')]
+L holds: False violations: [('a', 'b')]
+L+P holds: False violations: [('a', 'b')]
+L+P+R holds: False violations: [('a', 'b')]
+Algorithm: CompactGkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: False violations: [('a', 'b')]
+L holds: False violations: [('a', 'b')]
+L+P holds: False violations: [('a', 'b')]
+L+P+R holds: False violations: [('a', 'b')]
+Algorithm: CompactGkValidator
+Options: ['gk_graph', 'gk_graph_path', 'gk_key', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact holds: False violations: [('a', 'b')]
+L holds: False violations: [('a', 'b')]
+L+P holds: False violations: [('a', 'b')]
+L+P+R holds: False violations: [('a', 'b')]
+GK validation examples passed
+'''
+
+snapshots['test_example[basic/deduplicating_gk.py-None-deduplicating_gk_output] deduplicating_gk_output'] = '''Default algorithm: GkDeduplicator
+Compact deduplicator available: True
+In-memory triples:
+Triple(subject=Node(kind=kEntity, id_or_val="a", type="Person"), predicate="worksAt", object=Node(kind=kEntity, id_or_val="c1", type="Company"))
+Triple(subject=Node(kind=kEntity, id_or_val="b", type="Person"), predicate="worksAt", object=Node(kind=kEntity, id_or_val="c2", type="Company"))
+Triple(subject=Node(kind=kEntity, id_or_val="c1", type="Company"), predicate="code", object=Node(kind=kValue, id_or_val="shared", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="c1", type="Company"), predicate="locatedIn", object=Node(kind=kEntity, id_or_val="city1", type="City"))
+Triple(subject=Node(kind=kEntity, id_or_val="c1", type="Company"), predicate="status", object=Node(kind=kValue, id_or_val="active", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="c2", type="Company"), predicate="code", object=Node(kind=kValue, id_or_val="shared", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="c2", type="Company"), predicate="locatedIn", object=Node(kind=kEntity, id_or_val="city2", type="City"))
+Triple(subject=Node(kind=kEntity, id_or_val="c2", type="Company"), predicate="status", object=Node(kind=kValue, id_or_val="active", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="c3", type="Company"), predicate="code", object=Node(kind=kValue, id_or_val="unique", type=""))
+Triple(subject=Node(kind=kEntity, id_or_val="c3", type="Company"), predicate="locatedIn", object=Node(kind=kEntity, id_or_val="city3", type="City"))
+Triple(subject=Node(kind=kEntity, id_or_val="c3", type="Company"), predicate="status", object=Node(kind=kValue, id_or_val="active", type=""))
+Key: GraphKey(root=Variable(kind=kEntity, name="x"), pattern=[PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="worksAt", object=Variable(kind=kEntity, name="y"))], types={Variable(kind=kEntity, name="x"): "Person", Variable(kind=kEntity, name="y"): "Company"})
+Root: Variable(kind=kEntity, name="x") pattern: [PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="worksAt", object=Variable(kind=kEntity, name="y"))] types: [('x', 'Person'), ('y', 'Company')]
+Key: GraphKey(root=Variable(kind=kEntity, name="x"), pattern=[PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="code", object=Variable(kind=kValue, name="z")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="locatedIn", object=Variable(kind=kWildcard, name="w")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="status", object=Variable(kind=kConstant, name="active"))], types={Variable(kind=kEntity, name="x"): "Company", Variable(kind=kWildcard, name="w"): "City"})
+Root: Variable(kind=kEntity, name="x") pattern: [PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="code", object=Variable(kind=kValue, name="z")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="locatedIn", object=Variable(kind=kWildcard, name="w")), PatternTriple(subject=Variable(kind=kEntity, name="x"), predicate="status", object=Variable(kind=kConstant, name="active"))] types: [('w', 'City'), ('x', 'Company')]
+Compact graph: CompactGraph(vertices=11, entities=8, edges=11, input_triples=11)
+Counts: 11 8 11 11
+Vertex: NodeKind.ENTITY a 'Person'
+Vertex: NodeKind.ENTITY b 'Person'
+Vertex: NodeKind.ENTITY c1 'Company'
+Vertex: NodeKind.ENTITY c2 'Company'
+Vertex: NodeKind.ENTITY c3 'Company'
+Vertex: NodeKind.ENTITY city1 'City'
+Vertex: NodeKind.ENTITY city2 'City'
+Vertex: NodeKind.ENTITY city3 'City'
+Vertex: NodeKind.VALUE active ''
+Vertex: NodeKind.VALUE shared ''
+Vertex: NodeKind.VALUE unique ''
+Company neighborhoods: CompactGraph(vertices=5, entities=3, edges=4, input_triples=4) CompactGraph(vertices=5, entities=3, edges=4, input_triples=4)
+Pairable: True pairs: 4
+Candidates: Variable(kind=kEntity, name="x") 1 [(Node(kind=kEntity, id_or_val="c1", type="Company"), Node(kind=kEntity, id_or_val="c2", type="Company"))]
+Candidates: Variable(kind=kValue, name="z") 1 [(Node(kind=kValue, id_or_val="shared", type=""), Node(kind=kValue, id_or_val="shared", type=""))]
+Candidates: Variable(kind=kWildcard, name="w") 1 [(Node(kind=kEntity, id_or_val="city1", type="City"), Node(kind=kEntity, id_or_val="city2", type="City"))]
+Candidates: Variable(kind=kConstant, name="active") 1 [(Node(kind=kValue, id_or_val="active", type=""), Node(kind=kValue, id_or_val="active", type=""))]
+Reduced graph 1 CompactGraph(vertices=4, entities=2, edges=3, input_triples=3) [Node(kind=kEntity, id_or_val="c1", type="Company"), Node(kind=kEntity, id_or_val="city1", type="City"), Node(kind=kValue, id_or_val="active", type=""), Node(kind=kValue, id_or_val="shared", type="")]
+Reduced graph 2 CompactGraph(vertices=4, entities=2, edges=3, input_triples=3) [Node(kind=kEntity, id_or_val="c2", type="Company"), Node(kind=kEntity, id_or_val="city2", type="City"), Node(kind=kValue, id_or_val="active", type=""), Node(kind=kValue, id_or_val="shared", type="")]
+Algorithm: GkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L+P classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L+P+R classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+Algorithm: GkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L+P classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L+P+R classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+Algorithm: CompactGkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L+P classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+L+P+R classes: [['a', 'b'], ['c1', 'c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 6 merges: 2
+Algorithm: CompactGkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L+P classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+L+P+R classes: [['a'], ['b'], ['c1'], ['c2'], ['c3'], ['city1'], ['city2'], ['city3']] class count: 8 merges: 0
+CSV graph: simple_graph.csv
+subject_id,subject_type,predicate,object_kind,object_id_or_value,object_type
+a,X,p,entity,shared,Y
+b,X,p,entity,shared,Y
+Algorithm: GkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P+R classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+Algorithm: CompactGkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P+R classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+Algorithm: CompactGkDeduplicator
+Options: ['gk_graph', 'gk_graph_path', 'gk_keys', 'use_localization', 'use_pairing_filter', 'use_subgraph_reduction']
+Localization: Search within induced root neighborhoods; enables the use_pairing_filter option
+Exact classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+L+P+R classes: [['a', 'b'], ['shared']] class count: 2 merges: 1
+GK deduplication examples passed
+'''
