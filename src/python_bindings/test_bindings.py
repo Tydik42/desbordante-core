@@ -472,6 +472,89 @@ class TestGkBindings(unittest.TestCase):
                 algorithm.execute(use_localization=True, use_pairing_filter=True,
                                   use_subgraph_reduction=True)
 
+    def test_gk_compact_standalone_optimizations_own_results_and_share_api(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        ops = gk.optimizations
+        self.assertIs(ops, desb.gk_deduplication.optimizations)
+        graph = gk.CompactGraph.from_triples(source)
+        first = ops.localize(graph, "a", 1)
+        second = ops.localize(graph, "b", 1)
+        self.assertEqual((first.vertex_count, first.edge_count), (2, 1))
+        self.assertEqual({node.id_or_val for node in first.get_vertices()}, {"a", "a_target"})
+        pairing = ops.compute_pairing(key, first, second)
+        self.assertTrue(pairing.can_pair("a", "b"))
+        self.assertFalse(pairing.can_pair("b", "a"))
+        self.assertEqual(pairing.pair_count, 2)
+        self.assertEqual(pairing.candidate_count(key.root), 1)
+        self.assertEqual([(a.id_or_val, b.id_or_val) for a, b in pairing.get_candidates(key.root)],
+                         [("a", "b")])
+        del graph, first, second
+        gc.collect()
+        reduced = ops.reduce_subgraphs(pairing)
+        del pairing
+        gc.collect()
+        self.assertEqual([(g.vertex_count, g.edge_count) for g in reduced], [(2, 1), (2, 1)])
+        self.assertEqual({node.id_or_val for node in reduced[1].get_vertices()}, {"b", "b_target"})
+        validator = gk.algorithms.CompactGkValidator()
+        validator.load_data(gk_graph=reduced[0], gk_key=key)
+        validator.execute(use_localization=True)
+        self.assertTrue(validator.holds)
+
+    def test_gk_compact_standalone_optimizations_handle_empty_and_invalid_inputs(self):
+        source, key = self.make_graph_and_key()
+        gk = desb.gk_verification
+        ops = gk.optimizations
+        graph = gk.CompactGraph.from_triples(source)
+        isolated = ops.localize(graph, "a", 0)
+        self.assertEqual((isolated.vertex_count, isolated.edge_count), (1, 0))
+        pairing = ops.compute_pairing(key, isolated, isolated)
+        self.assertEqual(pairing.pair_count, 0)
+        self.assertFalse(pairing.can_pair("a", "a"))
+        self.assertEqual(pairing.get_candidates(key.root), [])
+        self.assertEqual([(g.vertex_count, g.edge_count) for g in ops.reduce_subgraphs(pairing)],
+                         [(0, 0), (0, 0)])
+        with self.assertRaises(ValueError):
+            ops.localize(isolated, "b", 1)
+        with self.assertRaises(ValueError):
+            ops.localize(graph, "absent", 1)
+        with self.assertRaises(TypeError):
+            ops.localize(None, "a", 1)
+        with self.assertRaises(TypeError):
+            ops.compute_pairing(key, None, graph)
+        with self.assertRaises(ValueError):
+            ops.compute_pairing(key, graph, gk.CompactGraph.from_triples(source))
+        with self.assertRaises(ValueError):
+            pairing.candidate_count(gk.Variable(gk.VarKind.ENTITY, "unknown"))
+        missing = gk.GraphKey([gk.PatternTriple(key.root, "absent", key.pattern[0].object)],
+                              key.types, key.root)
+        no_matches = ops.compute_pairing(missing, graph, graph)
+        self.assertEqual(no_matches.candidate_count(key.root), 0)
+        self.assertFalse(no_matches.can_pair("a", "b"))
+        self.assertEqual([g.vertex_count for g in ops.reduce_subgraphs(no_matches)], [0, 0])
+
+    def test_gk_compact_standalone_pairing_supports_values_constants_and_wildcards(self):
+        gk = desb.gk_verification
+        x = gk.Variable(gk.VarKind.ENTITY, "x")
+        w = gk.Variable(gk.VarKind.WILDCARD, "w")
+        for kind in (gk.VarKind.VALUE, gk.VarKind.CONSTANT):
+            value = gk.Variable(kind, "Alice")
+            source = []
+            for root, company in (("a", "c0"), ("b", "c1")):
+                node = gk.Node(gk.NodeKind.ENTITY, root, "Person")
+                source.append(gk.Triple(node, "name", gk.Node(gk.NodeKind.VALUE, "Alice")))
+                source.append(gk.Triple(node, "worksAt", gk.Node(gk.NodeKind.ENTITY, company, "Company")))
+            graph = gk.CompactGraph.from_triples(source)
+            key = gk.GraphKey([gk.PatternTriple(x, "name", value), gk.PatternTriple(x, "worksAt", w)],
+                              {x: "Person", w: "Company"}, x)
+            pairing = gk.optimizations.compute_pairing(key, graph, graph)
+            self.assertTrue(pairing.can_pair("a", "b"))
+            values = pairing.get_candidates(value)
+            self.assertEqual(len(values), 1)
+            self.assertEqual(values[0][0].kind, gk.NodeKind.VALUE)
+            self.assertEqual(values[0][0].id_or_val, "Alice")
+            self.assertEqual(values[0][1].id_or_val, "Alice")
+
     def test_gk_compact_graph_ownership_csv_and_validator(self):
         source, key = self.make_graph_and_key()
         gk = desb.gk_verification

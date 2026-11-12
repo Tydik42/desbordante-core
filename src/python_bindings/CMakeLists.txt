@@ -221,7 +221,9 @@ desbordante_add_bind(
     gk_compact
     SRCS gk_compact/bind_gk_compact.cpp
     LIBS ${DESBORDANTE_PREFIX}::gk_compact::graph
-         ${DESBORDANTE_PREFIX}::gk_compact::parser Boost::headers
+         ${DESBORDANTE_PREFIX}::gk_compact::parser
+         ${DESBORDANTE_PREFIX}::gk_compact::key
+         ${DESBORDANTE_PREFIX}::gk_compact::optimizations Boost::headers
 )
 get_target_property(GK_COMPACT_VALIDATION_AVAILABLE ${DESBORDANTE_PREFIX}::gk_compact::validator
                     GK_COMPACT_KERNEL_AVAILABLE)
