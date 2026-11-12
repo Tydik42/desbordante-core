@@ -5,6 +5,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -12,12 +13,14 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include "core/algorithms/gk/gk_deduplicator/chase_engine.h"
 #include "core/algorithms/gk_compact/gk_deduplicator/gk_deduplicator.h"
 #include "core/algorithms/gk_compact/model/graph_builder.h"
 #include "core/config/exceptions.h"
 #include "core/config/names.h"
+#include "core/util/logger.h"
 
 namespace {
 
@@ -111,6 +114,46 @@ void Configure(algos::Algorithm& algorithm, bool localization = false, bool pair
 }
 
 }  // namespace
+
+TEST(GkCompactDeduplicatorTest, TraceSeparatesPreparationPassesClusteringAndDecoding) {
+    auto const logger = util::logging::Initialize();
+
+    struct RestoreLogger {
+        std::shared_ptr<spdlog::logger> logger;
+        std::vector<spdlog::sink_ptr> sinks;
+        spdlog::level::level_enum level;
+
+        ~RestoreLogger() {
+            logger->sinks() = std::move(sinks);
+            logger->set_level(level);
+        }
+    } restore{logger, logger->sinks(), logger->level()};
+
+    std::ostringstream output;
+    logger->sinks() = {std::make_shared<spdlog::sinks::ostream_sink_mt>(output)};
+    logger->set_level(spdlog::level::trace);
+    auto const graph =
+            std::make_shared<compact::Graph const>(compact::BuildGraph(DependentGraph()));
+    algos::CompactGkDeduplicator algorithm;
+    algorithm.SetOption(config::names::kGkGraphData, graph);
+    algorithm.SetOption(config::names::kGkKeysData, std::vector{EntityKey(), ValueKey()});
+    algorithm.LoadData();
+    Configure(algorithm, true, true, true);
+    algorithm.Execute();
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    for (auto phase : {"chase_preparation", "chase_pass", "result_clustering", "result_decode",
+                       "chase", "deduplication"})
+        EXPECT_NE(output.str().find(std::string("phase '") + phase + "':"), std::string::npos);
+#else
+    EXPECT_EQ(output.str().find("phase '"), std::string::npos);
+#endif
+    output.str("");
+    output.clear();
+    logger->set_level(spdlog::level::off);
+    Configure(algorithm, true, false, false);
+    algorithm.Execute();
+    EXPECT_TRUE(output.str().empty());
+}
 
 TEST(GkCompactDeduplicatorTest, ReachesFixedPointAndResetsEquivalenceOnEveryRun) {
     auto graph = DependentGraph();

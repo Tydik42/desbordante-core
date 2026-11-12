@@ -19,6 +19,7 @@
 #include "core/algorithms/gk/model/graph_builder.h"
 #include "core/algorithms/gk/parser/graph_parser.h"
 #include "core/algorithms/gk_compact/model/graph_builder.h"
+#include "core/algorithms/gk_compact/model/graph_view.h"
 #include "core/algorithms/gk_compact/parser/graph_parser.h"
 
 namespace {
@@ -159,6 +160,36 @@ TEST(GkCompactGraphTest, EmptyGraphHasValidOffsetsAndNoDictionaryEntries) {
         EXPECT_THROW(gk_compact::AdjacentRow(graph.Data().outgoing, 0), std::out_of_range);
         EXPECT_THROW(gk_compact::AdjacentRow(graph.Data().incoming, 0), std::out_of_range);
     }
+}
+
+TEST(GkCompactGraphTest, MaterializedSelectionsOwnTopologyAndPreserveOriginalIdsAndMetadata) {
+    auto const source = gk_compact::BuildGraph(ExampleGraph());
+    std::vector<Id> const vertices{*source.FindEntity("a"), *source.FindEntity("c"),
+                                   *source.FindValue("Alice")};
+    auto materialized = gk_compact::Materialize(gk_compact::GraphView(source, vertices));
+    EXPECT_EQ(materialized.Data().metadata, source.Data().metadata);
+    EXPECT_EQ(materialized.GetVertexCount(), 3U);
+    EXPECT_EQ(materialized.GetEntityCount(), 2U);
+    EXPECT_EQ(materialized.GetEdgeCount(), 2U);
+    EXPECT_EQ(materialized.Data().row_to_vertex, vertices);
+    EXPECT_EQ(Facts(Expand(materialized)), Facts(Graph{ExampleGraph()[0], ExampleGraph()[2]}));
+    auto const copied = gk_compact::Materialize(gk_compact::GraphView(materialized));
+    EXPECT_EQ(Facts(Expand(copied)), Facts(Expand(materialized)));
+
+    auto isolated = [&] {
+        auto const temporary = gk_compact::BuildGraph(ExampleGraph());
+        std::vector<Id> const selection{*temporary.FindEntity("b")};
+        return gk_compact::Materialize(gk_compact::GraphView(temporary, selection));
+    }();
+    EXPECT_EQ(isolated.GetVertexCount(), 1U);
+    EXPECT_EQ(isolated.GetEdgeCount(), 0U);
+    EXPECT_EQ(isolated.GetLabel(*isolated.FindEntity("b")), "b");
+    EXPECT_TRUE(isolated.ContainsVertex(*isolated.FindEntity("b")));
+    EXPECT_FALSE(isolated.ContainsVertex(*isolated.FindEntity("a")));
+    auto const empty = gk_compact::Materialize(gk_compact::GraphView(source, {}));
+    EXPECT_EQ(empty.GetVertexCount(), 0U);
+    EXPECT_EQ(empty.GetEdgeCount(), 0U);
+    EXPECT_EQ(empty.Data().metadata, source.Data().metadata);
 }
 
 TEST(GkCompactGraphTest, KeepsEntityValueAndLabelNamespacesSeparate) {

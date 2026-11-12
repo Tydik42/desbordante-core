@@ -18,6 +18,11 @@ namespace {
 gk::DeduplicationResult Decode(gk_compact::Graph const& graph,
                                std::vector<std::vector<gk_compact::VertexId>> clusters,
                                std::size_t merges) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     gk::DeduplicationResult result{{}, merges};
     result.clusters.reserve(clusters.size());
     for (auto const& cluster : clusters) {
@@ -27,6 +32,14 @@ gk::DeduplicationResult Decode(gk_compact::Graph const& graph,
             decoded.push_back(graph.GetLabel(vertex));
         }
     }
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (trace)
+        LOG_TRACE("Compact GK phase 'result_decode': {} ns, classes={}",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                  result.clusters.size());
+#endif
     return result;
 }
 

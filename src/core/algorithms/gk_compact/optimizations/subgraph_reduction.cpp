@@ -4,6 +4,12 @@
 #include <cstdint>
 #include <vector>
 
+#include "core/util/logger.h"
+
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
+
 namespace gk_compact {
 namespace {
 
@@ -36,8 +42,23 @@ void Project(GraphView neighborhood, PairingRelation const& pairing, PairingProj
 }  // namespace
 
 void SubgraphReduction::Compute(GraphView first, GraphView second, PairingRelation const& pairing) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     Project(first, pairing, PairingProjection::kFirst, retained_, first_);
     Project(second, pairing, PairingProjection::kSecond, retained_, second_);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (trace)
+        LOG_TRACE(
+                "Compact GK phase 'reduction': {} ns, first_vertices={}->{}, "
+                "second_vertices={}->{}",
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - started)
+                        .count(),
+                first.GetVertexCount(), first_.size(), second.GetVertexCount(), second_.size());
+#endif
 }
 
 std::vector<VertexId> ReduceSubgraph(GraphView neighborhood, PairingRelation const& pairing,

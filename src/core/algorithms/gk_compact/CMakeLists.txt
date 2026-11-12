@@ -11,7 +11,7 @@ set(NAME gk_compact.key)
 desbordante_add_lib(NAME)
 target_sources(${NAME} PRIVATE model/key.cpp)
 target_link_libraries(${NAME} PRIVATE ${DESBORDANTE_PREFIX}::gk_compact::graph
-                                     ${DESBORDANTE_PREFIX}::gk::key)
+                                     ${DESBORDANTE_PREFIX}::gk::key spdlog::spdlog_header_only)
 
 # Pair evaluation is shared by the validator and Chase.
 set(NAME gk_compact.eval)

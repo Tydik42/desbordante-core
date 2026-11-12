@@ -8,6 +8,10 @@
 #include "core/algorithms/gk/model/graph_builder.h"
 #include "core/util/logger.h"
 
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
+
 namespace gk_compact {
 namespace {
 
@@ -134,6 +138,11 @@ void GraphBuilder::BuildIndex(CsrData& index, bool incoming) {
 }
 
 Graph GraphBuilder::Build() && {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     {
         auto const types = OrderLabels(types_);
         auto const predicates = OrderLabels(predicates_);
@@ -163,6 +172,14 @@ Graph GraphBuilder::Build() && {
               result.GetVertexCount(), result.GetEntityCount(), result.GetEdgeCount(),
               result.GetInputTripleCount());
     *this = GraphBuilder{};
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (trace)
+        LOG_TRACE("Compact GK phase 'graph_build': {} ns, vertices={}, edges={}",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                  result.GetVertexCount(), result.GetEdgeCount());
+#endif
     return result;
 }
 

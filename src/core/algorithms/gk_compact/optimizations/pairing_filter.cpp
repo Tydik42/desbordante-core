@@ -7,11 +7,22 @@
 #include <stdexcept>
 #include <vector>
 
+#include "core/util/logger.h"
+
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+#include <chrono>
+#endif
+
 namespace gk_compact {
 
 using gk::model::VarKind;
 
 PairingPlan BuildPairingPlan(GraphKey const& key) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     PairingPlan plan{key, {}, {}, {}, 0};
     std::vector<TypeId> types;
     for (auto const& node : key.nodes)
@@ -48,10 +59,23 @@ PairingPlan BuildPairingPlan(GraphKey const& key) {
         plan.incident[triple.subject].push_back(index);
         if (triple.object != triple.subject) plan.incident[triple.object].push_back(index);
     }
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (trace)
+        LOG_TRACE("Compact GK phase 'pairing_plan': {} ns, nodes={}, domains={}",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                  key.nodes.size(), plan.domain_specs.size());
+#endif
     return plan;
 }
 
 PairingDomain BuildPairingDomain(PairingPlan const& plan, GraphView graph) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     PairingDomain domain{graph, {0}, {}};
     std::vector<std::vector<VertexId>> groups(plan.domain_specs.size());
     auto const entity_specs = std::span(plan.domain_specs).first(plan.entity_domains);
@@ -75,6 +99,14 @@ PairingDomain BuildPairingDomain(PairingPlan const& plan, GraphView graph) {
     domain.vertices.reserve(domain.offsets.back());
     for (auto const& group : groups)
         domain.vertices.insert(domain.vertices.end(), group.begin(), group.end());
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (trace)
+        LOG_TRACE("Compact GK phase 'pairing_domain': {} ns, graph_vertices={}, candidates={}",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                  graph.GetVertexCount(), domain.vertices.size());
+#endif
     return domain;
 }
 
@@ -198,8 +230,29 @@ bool PairingFilter::HasSupport(VertexPair pair, PredicateId predicate, PatternNo
 
 PairingRelation const& PairingFilter::Compute(PairingPlan const& plan, PairingDomain const& first,
                                               PairingDomain const& second) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    bool const trace = util::logging::Initialize()->should_log(spdlog::level::trace);
+    auto const started =
+            trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     Initialize(plan, first, second);
-    if (relation_.pairs.empty()) return relation_;
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    auto const initial = relation_.pairs.size();
+#endif
+    auto finish = [&]() -> PairingRelation const& {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        if (trace)
+            LOG_TRACE(
+                    "Compact GK phase 'pairing': {} ns, initial_candidates={}, "
+                    "surviving_candidates={}",
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - started)
+                            .count(),
+                    initial, relation_.pairs.size());
+#endif
+        return relation_;
+    };
+    if (relation_.pairs.empty()) return finish();
     auto const& key = plan.key;
     while (pending_ != 0) {
         auto const index = queue_[queue_head_];
@@ -226,7 +279,7 @@ PairingRelation const& PairingFilter::Compute(PairingPlan const& plan, PairingDo
         states_[index] = CandidateState::kRemoved;
         if (--live_counts_[node] == 0) {
             Clear(key.nodes.size());
-            return relation_;
+            return finish();
         }
         NotifyDependents(plan, node, pair, first.graph, second.graph);
     }
@@ -242,7 +295,7 @@ PairingRelation const& PairingFilter::Compute(PairingPlan const& plan, PairingDo
     }
     relation_.offsets.back() = write;
     relation_.pairs.resize(write);
-    return relation_;
+    return finish();
 }
 
 PairingRelation ComputePairing(GraphKey const& key, GraphView first, GraphView second) {

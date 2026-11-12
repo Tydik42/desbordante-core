@@ -744,11 +744,30 @@ TEST(GkCompactValidatorTest, LogsPhaseTimingsOnlyWhenTraceIsEnabled) {
     validator.LoadData();
     Execute(validator, true, true, true);
 #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    for (auto phase : {"load", "root_selection", "localization", "pairing_domains", "pairing",
-                       "reduction", "exact_search", "validation"})
+    for (auto phase :
+         {"graph_build", "graph_validation", "key_preparation", "load", "root_selection",
+          "localization", "pairing_plan", "pairing_domain", "pairing_domains", "pairing",
+          "reduction", "exact_search", "validation_search", "validation"})
         EXPECT_NE(output.str().find(std::string("phase '") + phase + "':"), std::string::npos);
+    EXPECT_NE(output.str().find("full_inputs=(false, false)"), std::string::npos);
 #else
     EXPECT_EQ(output.str().find("phase '"), std::string::npos);
+#endif
+    output.str("");
+    output.clear();
+    Execute(validator, true, false, false);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    EXPECT_EQ(output.str().find("phase 'localization':"), std::string::npos);
+    EXPECT_NE(output.str().find("exact search already bounded"), std::string::npos);
+    EXPECT_NE(output.str().find("full_inputs=(true, true)"), std::string::npos);
+#endif
+    output.str("");
+    output.clear();
+    Execute(validator, true, true, false);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    EXPECT_NE(output.str().find("phase 'localization':"), std::string::npos);
+    EXPECT_NE(output.str().find("phase 'pairing':"), std::string::npos);
+    EXPECT_NE(output.str().find("full_inputs=(true, true)"), std::string::npos);
 #endif
     output.str("");
     output.clear();
@@ -944,6 +963,27 @@ TEST(GkCompactValidatorTest, PatternRadiusUsesShortestUndirectedDistancesNotTrav
         ASSERT_TRUE(graph_key);
         EXPECT_EQ(compact::GetPatternRadius(*graph_key), expected);
     }
+}
+
+TEST(GkCompactValidatorTest, ExpansionDepthDistinguishesRedundantLocalizationFromShortcuts) {
+    Variable const third{VarKind::kEntity, "third"};
+    auto const graph = compact::BuildGraph({{Entity("a", "X"), "p", Entity("b", "Y")},
+                                            {Entity("c", "Z"), "q", Entity("a", "X")},
+                                            {Entity("c", "Z"), "r", Entity("b", "Y")}});
+    GraphKeyDescriptor const centered{
+            {{x, "p", y}, {third, "q", x}, {third, "r", y}}, {{x, "X"}, {y, "Y"}, {third, "Z"}}, x};
+    auto const first = compact::BuildGraphKey(centered, graph);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->radius, 1U);
+    EXPECT_EQ(first->expansion_depth, 1U);
+    EXPECT_TRUE(first->SearchStaysInNeighborhood());
+    auto shortcut = centered;
+    shortcut.root_x = third;
+    auto const second = compact::BuildGraphKey(shortcut, graph);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->radius, 1U);
+    EXPECT_EQ(second->expansion_depth, 2U);
+    EXPECT_FALSE(second->SearchStaysInNeighborhood());
 }
 
 TEST(GkCompactValidatorTest, NeighborhoodsRetainIsolatedRootsAndSparseOriginalIds) {

@@ -79,6 +79,13 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
     if (use_localization) {
         for (auto const& [type, group] : groups) {
             for (auto key : group.keys) {
+                if (!use_pairing_filter && keys_[key].SearchStaysInNeighborhood()) {
+                    LOG_TRACE(
+                            "Compact GK localization: key={} exact search already bounded, "
+                            "radius={}, expansion_depth={}",
+                            key, keys_[key].radius, keys_[key].expansion_depth);
+                    continue;
+                }
                 auto& cached = neighborhood_groups[{type, GetPatternRadius(keys_[key])}];
                 if (cached.positions.empty())
                     cached.positions.resize(group.entities.size(), group.entities.size());
@@ -114,7 +121,21 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
                                                          *neighborhoods[index]->neighborhoods);
         }
     }
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    if (chase_trace)
+        LOG_TRACE(
+                "Compact GK phase 'chase_preparation': {} ns, keys={}, root_types={}, "
+                "neighborhood_groups={}",
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - chase_started)
+                        .count(),
+                keys_.size(), groups.size(), neighborhood_groups.size());
+#endif
     for (std::size_t pass_count = 1;; ++pass_count) {
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        auto const pass_started = chase_trace ? std::chrono::steady_clock::now()
+                                              : std::chrono::steady_clock::time_point{};
+#endif
         auto const merges_before = result.merge_count;
         for (auto const& [type, group] : groups) {
             for (std::size_t first = 0; first + 1 < group.entities.size(); ++first) {
@@ -127,10 +148,12 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
                         auto const* cached = neighborhoods[key];
                         auto const left_index = cached ? cached->positions[first] : first;
                         auto const right_index = cached ? cached->positions[second] : second;
-                        auto const left =
-                                cached ? (*cached->neighborhoods)[left_index] : GraphView(graph);
-                        auto const right =
-                                cached ? (*cached->neighborhoods)[right_index] : GraphView(graph);
+                        bool const restrict_search =
+                                cached && !keys_[key].SearchStaysInNeighborhood();
+                        auto const left = restrict_search ? (*cached->neighborhoods)[left_index]
+                                                          : GraphView(graph);
+                        auto const right = restrict_search ? (*cached->neighborhoods)[right_index]
+                                                           : GraphView(graph);
                         EvalGKInput const input{left, right, lhs, rhs};
                         bool const matches =
                                 pairing_filter
@@ -153,11 +176,23 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
         }
         LOG_DEBUG("Compact GK Chase pass {}: {} new merges, {} active classes remain", pass_count,
                   result.merge_count - merges_before, graph.GetEntityCount() - result.merge_count);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+        if (chase_trace)
+            LOG_TRACE("Compact GK phase 'chase_pass': {} ns, pass={}, merges={}",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - pass_started)
+                              .count(),
+                      pass_count, result.merge_count - merges_before);
+#endif
         if (result.merge_count == merges_before) break;
     }
 
     // Metadata can contain inactive entities. Only active original IDs belong
     // to this result; every successful merge reduces their class count by one.
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+    auto const clustering_started = chase_trace ? std::chrono::steady_clock::now()
+                                                : std::chrono::steady_clock::time_point{};
+#endif
     auto const class_count = graph.GetEntityCount() - result.merge_count;
     result.clusters.reserve(class_count);
     if (eq.IsIdentity()) {
@@ -173,11 +208,17 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
         }
     }
 #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    if (chase_trace)
+    if (chase_trace) {
+        LOG_TRACE("Compact GK phase 'result_clustering': {} ns, classes={}",
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - clustering_started)
+                          .count(),
+                  result.clusters.size());
         LOG_TRACE("Compact GK phase 'chase': {} ns",
                   std::chrono::duration_cast<std::chrono::nanoseconds>(
                           std::chrono::steady_clock::now() - chase_started)
                           .count());
+    }
 #endif
     return result;
 }

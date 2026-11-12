@@ -40,8 +40,11 @@ bool EvaluatePair(EvalGK& evaluator, GraphKey const& key, EvalGKInput const& inp
                   EquivalenceRelation const& eq, bool use_pairing_filter = false,
                   bool use_subgraph_reduction = false);
 
-// Prepared path for repeated checks. Domains correspond to input's views and
-// plan; filter is reusable scratch shared across sequential pairs (and keys).
+// Prepared path for repeated checks. Domains belong to plan and preserve matches
+// for input's roots. Input views are used for exact search: they may be the full
+// base graph when the caller has established redundant localization. Reduction
+// ALWAYS restricts the domain graphs, never bypasses their selections.
+// Filter is reusable scratch shared across sequential pairs (and keys).
 bool EvaluatePair(EvalGK& evaluator, EvalGKInput const& input, EquivalenceRelation const& eq,
                   PairingPlan const& plan, PairingFilter& filter, PairingDomain const& first,
                   PairingDomain const& second, SubgraphReduction* reduction = nullptr);

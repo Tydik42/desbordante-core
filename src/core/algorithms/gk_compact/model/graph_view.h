@@ -133,4 +133,8 @@ public:
     }
 };
 
+// Own the induced topology while retaining the shared metadata and original IDs.
+// Unlike GraphView, the result does not borrow the selection or source graph.
+Graph Materialize(GraphView view);
+
 }  // namespace gk_compact

@@ -44,10 +44,14 @@ bool EvaluateExact(EvalGK& evaluator, EvalGKInput const& input, EquivalenceRelat
     bool const result = evaluator.Evaluate(input, eq);
 #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
     if (search_trace)
-        LOG_TRACE("Compact GK phase 'exact_search': {} ns",
-                  std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          std::chrono::steady_clock::now() - search_started)
-                          .count());
+        LOG_TRACE(
+                "Compact GK phase 'exact_search': {} ns, roots=({}, {}), matched={}, "
+                "full_inputs=({}, {})",
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - search_started)
+                        .count(),
+                input.first_root, input.second_root, result, input.first_graph.IsFull(),
+                input.second_graph.IsFull());
 #endif
     return result;
 }
@@ -99,10 +103,11 @@ Neighborhoods PrepareNeighborhoods(Graph const& input, std::span<VertexId const>
     Neighborhoods result(input, roots, radius);
 #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
     if (localization_trace)
-        LOG_TRACE("Compact GK phase 'localization': {} ns",
+        LOG_TRACE("Compact GK phase 'localization': {} ns, roots={}, radius={}",
                   std::chrono::duration_cast<std::chrono::nanoseconds>(
                           std::chrono::steady_clock::now() - localization_started)
-                          .count());
+                          .count(),
+                  roots.size(), radius);
 #endif
     return result;
 }
@@ -133,40 +138,19 @@ bool EvaluatePair(EvalGK& evaluator, EvalGKInput const& input, EquivalenceRelati
                   PairingDomain const& second, SubgraphReduction* reduction) {
     auto first_graph = input.first_graph;
     auto second_graph = input.second_graph;
-#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    bool const pairing_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
-    auto const pairing_started = pairing_trace ? std::chrono::steady_clock::now()
-                                               : std::chrono::steady_clock::time_point{};
-#endif
     auto const& pairing = filter.Compute(plan, first, second);
-#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    if (pairing_trace)
-        LOG_TRACE("Compact GK phase 'pairing': {} ns",
-                  std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          std::chrono::steady_clock::now() - pairing_started)
-                          .count());
-#endif
     if (!pairing.Contains(plan.key.root, input.first_root, input.second_root)) {
         LOG_TRACE("Compact GK pairing rejected roots ({}, {})", input.first_root,
                   input.second_root);
         return false;
     }
     if (reduction) {
-#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-        bool const reduction_trace = util::logging::Initialize()->should_log(spdlog::level::trace);
-        auto const reduction_started = reduction_trace ? std::chrono::steady_clock::now()
-                                                       : std::chrono::steady_clock::time_point{};
-#endif
-        reduction->Compute(first_graph, second_graph, pairing);
-        first_graph = GraphView(input.first_graph.Base(), reduction->First());
-        second_graph = GraphView(input.second_graph.Base(), reduction->Second());
-#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-        if (reduction_trace)
-            LOG_TRACE("Compact GK phase 'reduction': {} ns",
-                      std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now() - reduction_started)
-                              .count());
-#endif
+        // Pairing domains own the actual optimization inputs. Exact search may
+        // use their base CSR when its expansion tree already guarantees locality.
+        // Reduction must still restrict the original neighborhood domains.
+        reduction->Compute(first.graph, second.graph, pairing);
+        first_graph = GraphView(first.graph.Base(), reduction->First());
+        second_graph = GraphView(second.graph.Base(), reduction->Second());
     }
     return EvaluateExact(evaluator,
                          {first_graph, second_graph, input.first_root, input.second_root}, eq);

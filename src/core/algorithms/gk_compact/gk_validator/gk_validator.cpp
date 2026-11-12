@@ -101,8 +101,14 @@ void CompactGkValidator::ExecuteInternal() {
             auto const roots = gk_compact::SelectRoots(graph, *key_);
             if (roots.size() > 1) {
                 std::optional<gk_compact::Neighborhoods> neighborhoods;
-                if (use_localization_)
+                bool const bounded_search = key_->SearchStaysInNeighborhood();
+                if (use_localization_ && (use_pairing_filter_ || !bounded_search))
                     neighborhoods.emplace(gk_compact::PrepareNeighborhoods(graph, roots, *key_));
+                if (use_localization_ && bounded_search)
+                    LOG_TRACE(
+                            "Compact GK localization: exact search already bounded, radius={}, "
+                            "expansion_depth={}, neighborhoods_required_for_pairing={}",
+                            key_->radius, key_->expansion_depth, use_pairing_filter_);
                 std::optional<gk_compact::PairingPlan> pairing_plan;
                 std::optional<gk_compact::PairingFilter> pairing_filter;
                 std::optional<gk_compact::SubgraphReduction> reduction;
@@ -116,12 +122,19 @@ void CompactGkValidator::ExecuteInternal() {
                 }
                 gk_compact::EquivalenceRelation const eq0(graph.Metadata().GetEntityCount());
                 gk_compact::EvalGK evaluator(*key_);
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+                auto const search_started = validation_trace
+                                                    ? std::chrono::steady_clock::now()
+                                                    : std::chrono::steady_clock::time_point{};
+#endif
                 for (std::size_t first = 0; first + 1 < roots.size(); ++first) {
-                    auto const first_graph =
-                            neighborhoods ? (*neighborhoods)[first] : gk_compact::GraphView(graph);
+                    auto const first_graph = neighborhoods && !bounded_search
+                                                     ? (*neighborhoods)[first]
+                                                     : gk_compact::GraphView(graph);
                     for (std::size_t second = first + 1; second < roots.size(); ++second) {
-                        auto const second_graph = neighborhoods ? (*neighborhoods)[second]
-                                                                : gk_compact::GraphView(graph);
+                        auto const second_graph = neighborhoods && !bounded_search
+                                                          ? (*neighborhoods)[second]
+                                                          : gk_compact::GraphView(graph);
                         gk_compact::EvalGKInput const input{first_graph, second_graph, roots[first],
                                                             roots[second]};
                         bool const matches =
@@ -137,6 +150,15 @@ void CompactGkValidator::ExecuteInternal() {
                                                     graph.GetLabel(roots[second]));
                     }
                 }
+#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
+                if (validation_trace)
+                    LOG_TRACE(
+                            "Compact GK phase 'validation_search': {} ns, roots={}, violations={}",
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now() - search_started)
+                                    .count(),
+                            roots.size(), violations.size());
+#endif
             }
         }
         bool const holds = violations.empty();

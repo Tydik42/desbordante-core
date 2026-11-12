@@ -34,6 +34,14 @@ struct GraphKey {
     std::vector<PatternTriple> triples;
     PatternNodeId root = 0;
     TraversalOrder traversal_order;
+    // Shortest-path radius and maximum depth of the actual expansion tree.
+    // If depth <= radius, every partial assignment already lies in G^radius.
+    std::size_t radius = 0;
+    std::size_t expansion_depth = 0;
+
+    bool SearchStaysInNeighborhood() const noexcept {
+        return expansion_depth <= radius;
+    }
 };
 
 // Malformed descriptors throw. Missing types, predicates or constants yield
