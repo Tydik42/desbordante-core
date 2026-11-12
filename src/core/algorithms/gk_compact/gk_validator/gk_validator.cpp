@@ -98,14 +98,22 @@ void CompactGkValidator::ExecuteInternal() {
         auto const& graph = *graph_;
         std::vector<gk::EntityPair> violations;
         if (key_) {
-            std::vector<gk_compact::VertexId> roots;
-            auto const type = key_->nodes[key_->root].type;
-            for (auto entity : graph.EntityIds())
-                if (graph.GetType(entity) == type) roots.push_back(entity);
+            auto const roots = gk_compact::SelectRoots(graph, *key_);
             if (roots.size() > 1) {
                 std::optional<gk_compact::Neighborhoods> neighborhoods;
                 if (use_localization_)
                     neighborhoods.emplace(gk_compact::PrepareNeighborhoods(graph, roots, *key_));
+                std::optional<gk_compact::PairingPlan> pairing_plan;
+                std::optional<gk_compact::PairingFilter> pairing_filter;
+                std::optional<gk_compact::SubgraphReduction> reduction;
+                if (use_subgraph_reduction_) reduction.emplace();
+                std::vector<gk_compact::PairingDomain> pairing_domains;
+                if (use_pairing_filter_) {
+                    pairing_plan.emplace(gk_compact::BuildPairingPlan(*key_));
+                    pairing_domains =
+                            gk_compact::BuildPairingDomains(*pairing_plan, *neighborhoods);
+                    pairing_filter.emplace();
+                }
                 gk_compact::EquivalenceRelation const eq0(graph.Metadata().GetEntityCount());
                 gk_compact::EvalGK evaluator(*key_);
                 for (std::size_t first = 0; first + 1 < roots.size(); ++first) {
@@ -114,10 +122,17 @@ void CompactGkValidator::ExecuteInternal() {
                     for (std::size_t second = first + 1; second < roots.size(); ++second) {
                         auto const second_graph = neighborhoods ? (*neighborhoods)[second]
                                                                 : gk_compact::GraphView(graph);
-                        if (gk_compact::EvaluatePair(
-                                    evaluator, *key_,
-                                    {first_graph, second_graph, roots[first], roots[second]}, eq0,
-                                    use_pairing_filter_, use_subgraph_reduction_))
+                        gk_compact::EvalGKInput const input{first_graph, second_graph, roots[first],
+                                                            roots[second]};
+                        bool const matches =
+                                pairing_filter
+                                        ? gk_compact::EvaluatePair(
+                                                  evaluator, input, eq0, *pairing_plan,
+                                                  *pairing_filter, pairing_domains[first],
+                                                  pairing_domains[second],
+                                                  reduction ? &*reduction : nullptr)
+                                        : gk_compact::EvaluatePair(evaluator, *key_, input, eq0);
+                        if (matches)
                             violations.emplace_back(graph.GetLabel(roots[first]),
                                                     graph.GetLabel(roots[second]));
                     }

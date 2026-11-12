@@ -5,13 +5,14 @@
 #include <vector>
 
 namespace gk_compact {
+namespace {
 
-std::vector<VertexId> ReduceSubgraph(GraphView neighborhood, PairingRelation const& pairing,
-                                     PairingProjection projection) {
+void Project(GraphView neighborhood, PairingRelation const& pairing, PairingProjection projection,
+             std::vector<std::uint64_t>& retained, std::vector<VertexId>& result) {
     // Mark local positions, not original IDs. This remains small for sparse
     // neighborhoods and avoids a temporary list as large as the pairing relation.
     auto vertices = neighborhood.VertexIds();
-    std::vector<std::uint64_t> retained((neighborhood.GetVertexCount() + 63) / 64, 0);
+    retained.assign((neighborhood.GetVertexCount() + 63) / 64, 0);
     std::size_t count = 0;
     for (auto const& pair : pairing.pairs) {
         auto const vertex = projection == PairingProjection::kFirst ? pair.first : pair.second;
@@ -23,13 +24,27 @@ std::vector<VertexId> ReduceSubgraph(GraphView neighborhood, PairingRelation con
         word |= bit;
         ++count;
     }
-    std::vector<VertexId> result;
+    result.clear();
     result.reserve(count);
     std::size_t index = 0;
     for (auto vertex : vertices) {
         if (retained[index / 64] & (std::uint64_t{1} << (index % 64))) result.push_back(vertex);
         ++index;
     }
+}
+
+}  // namespace
+
+void SubgraphReduction::Compute(GraphView first, GraphView second, PairingRelation const& pairing) {
+    Project(first, pairing, PairingProjection::kFirst, retained_, first_);
+    Project(second, pairing, PairingProjection::kSecond, retained_, second_);
+}
+
+std::vector<VertexId> ReduceSubgraph(GraphView neighborhood, PairingRelation const& pairing,
+                                     PairingProjection projection) {
+    std::vector<std::uint64_t> retained;
+    std::vector<VertexId> result;
+    Project(neighborhood, pairing, projection, retained, result);
     return result;
 }
 

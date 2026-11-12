@@ -1,5 +1,7 @@
 #include "core/algorithms/gk_compact/gk_deduplicator/chase_engine.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <unordered_map>
@@ -21,6 +23,14 @@ struct RootGroup {
     std::vector<std::size_t> keys;
 };
 
+// One packed selection set per root type and exact radius. positions maps the
+// group's root indices to this cache's union of key-specific eligible roots.
+// std::map keeps these owners stable while views borrow their storage.
+struct NeighborhoodGroup {
+    std::vector<std::size_t> positions;
+    std::optional<Neighborhoods> neighborhoods;
+};
+
 }  // namespace
 
 ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool use_pairing_filter,
@@ -33,25 +43,75 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
                                            : std::chrono::steady_clock::time_point{};
 #endif
     ChaseRunResult result;
-    EquivalenceRelation eq(graph.Metadata().GetEntityCount());
+    EquivalenceRelation eq(graph.Data().metadata);
     std::map<TypeId, RootGroup> groups;
     std::vector<EvalGK> evaluators;
     evaluators.reserve(keys_.size());
-    for (std::size_t i = 0; i < keys_.size(); ++i) {
-        evaluators.emplace_back(keys_[i]);
-        auto const& key = keys_[i];
-        groups[key.nodes[key.root].type].keys.push_back(i);
+    std::vector<std::vector<std::uint8_t>> eligible(keys_.size());
+    {
+        std::vector<std::vector<VertexId>> roots(keys_.size());
+        for (std::size_t index = 0; index < keys_.size(); ++index) {
+            evaluators.emplace_back(keys_[index]);
+            roots[index] = SelectRoots(graph, keys_[index]);
+            if (roots[index].size() < 2) continue;
+            auto& group = groups[keys_[index].nodes[keys_[index].root].type];
+            group.keys.push_back(index);
+            group.entities.insert(group.entities.end(), roots[index].begin(), roots[index].end());
+        }
+        for (auto& [type, group] : groups) {
+            std::ranges::sort(group.entities);
+            group.entities.erase(std::unique(group.entities.begin(), group.entities.end()),
+                                 group.entities.end());
+            for (auto key : group.keys) {
+                eligible[key].resize(group.entities.size(), 0);
+                auto root = roots[key].begin();
+                for (std::size_t index = 0;
+                     index < group.entities.size() && root != roots[key].end(); ++index) {
+                    if (group.entities[index] != *root) continue;
+                    eligible[key][index] = 1;
+                    ++root;
+                }
+            }
+        }
     }
-    for (auto entity : graph.EntityIds()) {
-        auto const group = groups.find(graph.GetType(entity));
-        if (group != groups.end()) group->second.entities.push_back(entity);
-    }
-    std::vector<std::optional<Neighborhoods>> neighborhoods(keys_.size());
+    std::map<std::pair<TypeId, std::size_t>, NeighborhoodGroup> neighborhood_groups;
+    std::vector<NeighborhoodGroup const*> neighborhoods(keys_.size(), nullptr);
     if (use_localization) {
-        for (std::size_t i = 0; i < keys_.size(); ++i) {
-            auto const& key = keys_[i];
-            auto const& roots = groups.at(key.nodes[key.root].type).entities;
-            if (roots.size() > 1) neighborhoods[i].emplace(PrepareNeighborhoods(graph, roots, key));
+        for (auto const& [type, group] : groups) {
+            for (auto key : group.keys) {
+                auto& cached = neighborhood_groups[{type, GetPatternRadius(keys_[key])}];
+                if (cached.positions.empty())
+                    cached.positions.resize(group.entities.size(), group.entities.size());
+                for (std::size_t index = 0; index < group.entities.size(); ++index)
+                    if (eligible[key][index]) cached.positions[index] = 0;
+                neighborhoods[key] = &cached;
+            }
+        }
+        for (auto& [spec, cached] : neighborhood_groups) {
+            auto const& group = groups.at(spec.first);
+            std::vector<VertexId> roots;
+            for (std::size_t index = 0; index < group.entities.size(); ++index) {
+                if (cached.positions[index] == group.entities.size()) continue;
+                cached.positions[index] = roots.size();
+                roots.push_back(group.entities[index]);
+            }
+            cached.neighborhoods.emplace(PrepareNeighborhoods(graph, roots, spec.second));
+        }
+    }
+    std::vector<std::optional<PairingPlan>> pairing_plans;
+    std::vector<std::vector<PairingDomain>> pairing_domains;
+    std::optional<PairingFilter> pairing_filter;
+    std::optional<SubgraphReduction> reduction;
+    if (use_subgraph_reduction) reduction.emplace();
+    if (use_pairing_filter) {
+        pairing_plans.resize(keys_.size());
+        pairing_domains.resize(keys_.size());
+        pairing_filter.emplace();
+        for (std::size_t index = 0; index < keys_.size(); ++index) {
+            if (!neighborhoods[index]) continue;
+            pairing_plans[index].emplace(BuildPairingPlan(keys_[index]));
+            pairing_domains[index] = BuildPairingDomains(*pairing_plans[index],
+                                                         *neighborhoods[index]->neighborhoods);
         }
     }
     for (std::size_t pass_count = 1;; ++pass_count) {
@@ -63,13 +123,24 @@ ChaseRunResult ChaseEngine::Run(Graph const& graph, bool use_localization, bool 
                     auto const rhs = group.entities[second];
                     if (eq.AreEquivalent(lhs, rhs)) continue;
                     for (auto key : group.keys) {
-                        auto const left = neighborhoods[key] ? (*neighborhoods[key])[first]
-                                                             : GraphView(graph);
-                        auto const right = neighborhoods[key] ? (*neighborhoods[key])[second]
-                                                              : GraphView(graph);
-                        if (!EvaluatePair(evaluators[key], keys_[key], {left, right, lhs, rhs}, eq,
-                                          use_pairing_filter, use_subgraph_reduction))
-                            continue;
+                        if (!eligible[key][first] || !eligible[key][second]) continue;
+                        auto const* cached = neighborhoods[key];
+                        auto const left_index = cached ? cached->positions[first] : first;
+                        auto const right_index = cached ? cached->positions[second] : second;
+                        auto const left =
+                                cached ? (*cached->neighborhoods)[left_index] : GraphView(graph);
+                        auto const right =
+                                cached ? (*cached->neighborhoods)[right_index] : GraphView(graph);
+                        EvalGKInput const input{left, right, lhs, rhs};
+                        bool const matches =
+                                pairing_filter
+                                        ? EvaluatePair(evaluators[key], input, eq,
+                                                       *pairing_plans[key], *pairing_filter,
+                                                       pairing_domains[key][left_index],
+                                                       pairing_domains[key][right_index],
+                                                       reduction ? &*reduction : nullptr)
+                                        : EvaluatePair(evaluators[key], keys_[key], input, eq);
+                        if (!matches) continue;
                         if (eq.Merge(lhs, rhs)) {
                             ++result.merge_count;
                             LOG_TRACE("Compact GK Chase merged ({}, {}) in pass {}", lhs, rhs,

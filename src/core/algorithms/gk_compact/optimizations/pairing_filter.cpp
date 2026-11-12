@@ -2,205 +2,256 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <iterator>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
 namespace gk_compact {
-namespace {
 
 using gk::model::VarKind;
 
-enum class CandidateState : std::uint8_t { kRemoved, kLive, kPendingRemoval };
-
-PairingRelation EmptyRelation(std::size_t nodes) {
-    return {std::vector<Offset>(nodes + 1, 0), {}};
-}
-
-PairingRelation InitialRelation(GraphKey const& key, GraphView first, GraphView second) {
+PairingPlan BuildPairingPlan(GraphKey const& key) {
+    PairingPlan plan{key, {}, {}, {}, 0};
     std::vector<TypeId> types;
     for (auto const& node : key.nodes)
         if (node.kind == VarKind::kEntity || node.kind == VarKind::kWildcard)
             types.push_back(node.type);
     std::ranges::sort(types);
     types.erase(std::unique(types.begin(), types.end()), types.end());
-    auto type_index = [&](TypeId type) {
-        return static_cast<std::size_t>(std::ranges::lower_bound(types, type) - types.begin());
-    };
-    auto collect_entities = [&](GraphView graph) {
-        std::vector<std::vector<VertexId>> groups(types.size());
-        for (auto vertex : graph.EntityIds()) {
-            auto const type = graph.GetType(vertex);
-            auto const found = std::ranges::lower_bound(types, type);
-            if (found != types.end() && *found == type)
-                groups[static_cast<std::size_t>(found - types.begin())].push_back(vertex);
-        }
-        return groups;
-    };
-    auto const first_entities = collect_entities(first);
-    auto const second_entities = collect_entities(second);
-    std::vector<VertexId> values;
-    if (std::ranges::any_of(key.nodes,
-                            [](auto const& node) { return node.kind == VarKind::kValue; })) {
-        auto first_values = first.VertexIds() | std::views::drop(first.GetEntityCount());
-        auto second_values = second.VertexIds() | std::views::drop(second.GetEntityCount());
-        std::ranges::set_intersection(first_values, second_values, std::back_inserter(values));
-    }
-
-    // A connected pattern with any empty domain has an empty greatest relation.
-    // Check this before reserving a potentially large Cartesian product elsewhere.
+    for (auto type : types) plan.domain_specs.push_back({VarKind::kEntity, type, std::nullopt});
+    plan.entity_domains = types.size();
+    std::optional<std::size_t> value_domain;
     for (auto const& node : key.nodes) {
         switch (node.kind) {
             case VarKind::kEntity:
-            case VarKind::kWildcard: {
-                auto const index = type_index(node.type);
-                if (first_entities[index].empty() || second_entities[index].empty())
-                    return EmptyRelation(key.nodes.size());
+            case VarKind::kWildcard:
+                plan.node_domains.push_back(static_cast<std::size_t>(
+                        std::ranges::lower_bound(types, node.type) - types.begin()));
                 break;
-            }
             case VarKind::kValue:
-                if (values.empty()) return EmptyRelation(key.nodes.size());
+                if (!value_domain) {
+                    value_domain = plan.domain_specs.size();
+                    plan.domain_specs.push_back(node);
+                }
+                plan.node_domains.push_back(*value_domain);
                 break;
             case VarKind::kConstant:
-                if (!first.ContainsVertex(*node.constant) || !second.ContainsVertex(*node.constant))
-                    return EmptyRelation(key.nodes.size());
+                plan.node_domains.push_back(plan.domain_specs.size());
+                plan.domain_specs.push_back(node);
                 break;
         }
     }
+    plan.incident.resize(key.nodes.size());
+    for (std::size_t index = 0; index < key.triples.size(); ++index) {
+        auto const& triple = key.triples[index];
+        plan.incident[triple.subject].push_back(index);
+        if (triple.object != triple.subject) plan.incident[triple.object].push_back(index);
+    }
+    return plan;
+}
 
-    PairingRelation result;
-    result.offsets.reserve(key.nodes.size() + 1);
-    for (auto const& node : key.nodes) {
+PairingDomain BuildPairingDomain(PairingPlan const& plan, GraphView graph) {
+    PairingDomain domain{graph, {0}, {}};
+    std::vector<std::vector<VertexId>> groups(plan.domain_specs.size());
+    auto const entity_specs = std::span(plan.domain_specs).first(plan.entity_domains);
+    for (auto vertex : graph.EntityIds()) {
+        auto const type = graph.GetType(vertex);
+        auto const found = std::ranges::lower_bound(entity_specs, type, {}, &PatternNode::type);
+        if (found != entity_specs.end() && found->type == type)
+            groups[static_cast<std::size_t>(found - entity_specs.begin())].push_back(vertex);
+    }
+    for (std::size_t index = plan.entity_domains; index < plan.domain_specs.size(); ++index) {
+        auto const& node = plan.domain_specs[index];
+        if (node.kind == VarKind::kValue) {
+            auto values = graph.VertexIds() | std::views::drop(graph.GetEntityCount());
+            groups[index].assign(values.begin(), values.end());
+        } else if (graph.ContainsVertex(*node.constant)) {
+            groups[index].push_back(*node.constant);
+        }
+    }
+    domain.offsets.reserve(groups.size() + 1);
+    for (auto const& group : groups) domain.offsets.push_back(domain.offsets.back() + group.size());
+    domain.vertices.reserve(domain.offsets.back());
+    for (auto const& group : groups)
+        domain.vertices.insert(domain.vertices.end(), group.begin(), group.end());
+    return domain;
+}
+
+void PairingFilter::Clear(std::size_t nodes) {
+    relation_.offsets.assign(nodes + 1, 0);
+    relation_.pairs.clear();
+    states_.clear();
+    common_values_.clear();
+    queue_.clear();
+    live_counts_.clear();
+    queue_head_ = queue_tail_ = pending_ = 0;
+}
+
+void PairingFilter::Initialize(PairingPlan const& plan, PairingDomain const& first,
+                               PairingDomain const& second) {
+    Clear(plan.key.nodes.size());
+    // Reject an empty shared domain before reserving any Cartesian products.
+    for (std::size_t domain = 0; domain < plan.domain_specs.size(); ++domain) {
+        auto const left = first.Candidates(domain), right = second.Candidates(domain);
+        if (left.empty() || right.empty()) return;
+        if (plan.domain_specs[domain].kind == VarKind::kValue) {
+            std::ranges::set_intersection(left, right, std::back_inserter(common_values_));
+            if (common_values_.empty()) return;
+        }
+    }
+    for (std::size_t node = 0; node < plan.key.nodes.size(); ++node) {
+        auto const domain = plan.node_domains[node];
+        auto const& spec = plan.domain_specs[domain];
+        auto const remaining = relation_.pairs.max_size() - relation_.offsets[node];
         std::size_t count = 1;
-        auto const remaining = result.pairs.max_size() - result.offsets.back();
-        switch (node.kind) {
-            case VarKind::kEntity:
-            case VarKind::kWildcard: {
-                auto const index = type_index(node.type);
-                auto const left = first_entities[index].size();
-                auto const right = second_entities[index].size();
-                if (right > remaining / left)
-                    throw std::length_error("Compact GK pairing exceeds its candidate capacity");
-                count = left * right;
-                break;
-            }
-            case VarKind::kValue:
-                count = values.size();
-                break;
-            case VarKind::kConstant:
-                break;
+        if (spec.kind == VarKind::kEntity) {
+            auto const left = first.Candidates(domain).size();
+            auto const right = second.Candidates(domain).size();
+            if (right > remaining / left)
+                throw std::length_error("Compact GK pairing exceeds its candidate capacity");
+            count = left * right;
+        } else if (spec.kind == VarKind::kValue) {
+            count = common_values_.size();
         }
         if (count > remaining)
             throw std::length_error("Compact GK pairing exceeds its candidate capacity");
-        result.offsets.push_back(result.offsets.back() + count);
+        relation_.offsets[node + 1] = relation_.offsets[node] + count;
     }
-    result.pairs.reserve(result.offsets.back());
-    for (auto const& node : key.nodes) {
-        switch (node.kind) {
-            case VarKind::kEntity:
-            case VarKind::kWildcard: {
-                auto const index = type_index(node.type);
-                for (auto left : first_entities[index])
-                    for (auto right : second_entities[index])
-                        result.pairs.emplace_back(left, right);
-                break;
-            }
-            case VarKind::kValue:
-                for (auto value : values) result.pairs.emplace_back(value, value);
-                break;
-            case VarKind::kConstant:
-                result.pairs.emplace_back(*node.constant, *node.constant);
-                break;
+    relation_.pairs.reserve(relation_.offsets.back());
+    for (std::size_t node = 0; node < plan.key.nodes.size(); ++node) {
+        auto const domain = plan.node_domains[node];
+        auto const& spec = plan.domain_specs[domain];
+        if (spec.kind == VarKind::kEntity) {
+            for (auto left : first.Candidates(domain))
+                for (auto right : second.Candidates(domain))
+                    relation_.pairs.emplace_back(left, right);
+        } else if (spec.kind == VarKind::kValue) {
+            for (auto value : common_values_) relation_.pairs.emplace_back(value, value);
+        } else {
+            relation_.pairs.emplace_back(*spec.constant, *spec.constant);
         }
     }
-    return result;
+    // Reset all candidates, including those removed during the preceding call.
+    states_.assign(relation_.pairs.size(), CandidateState::kQueued);
+    queue_.resize(relation_.pairs.size());
+    std::iota(queue_.begin(), queue_.end(), Offset{0});
+    pending_ = queue_.size();
+    live_counts_.resize(plan.key.nodes.size());
+    for (std::size_t node = 0; node < live_counts_.size(); ++node)
+        live_counts_[node] = relation_.offsets[node + 1] - relation_.offsets[node];
 }
 
-bool ContainsLive(PairingRelation const& relation, std::span<CandidateState const> states,
-                  PatternNodeId node, VertexPair pair) {
-    auto const candidates = relation.Candidates(node);
+std::optional<Offset> PairingFilter::FindCandidate(PatternNodeId node, VertexPair pair) const {
+    auto const candidates = relation_.Candidates(node);
     auto const found = std::ranges::lower_bound(candidates, pair);
-    if (found == candidates.end() || *found != pair) return false;
-    auto const index =
-            relation.offsets[node] + static_cast<std::size_t>(found - candidates.begin());
-    // Pending deletions remain visible until the end of the current pass.
-    return states[index] != CandidateState::kRemoved;
+    if (found == candidates.end() || *found != pair) return std::nullopt;
+    return relation_.offsets[node] + static_cast<std::size_t>(found - candidates.begin());
 }
 
-bool HasSupport(VertexPair pair, PredicateId predicate, PatternNodeId neighbor, bool outgoing,
-                GraphView first, GraphView second, PairingRelation const& relation,
-                std::span<CandidateState const> states) {
-    auto first_edges = outgoing ? first.Outgoing(pair.first, predicate)
-                                : first.Incoming(pair.first, predicate);
-    auto second_edges = outgoing ? second.Outgoing(pair.second, predicate)
-                                 : second.Incoming(pair.second, predicate);
+bool PairingFilter::ContainsLive(PatternNodeId node, VertexPair pair) const {
+    auto const index = FindCandidate(node, pair);
+    return index && states_[*index] != CandidateState::kRemoved;
+}
+
+void PairingFilter::Enqueue(PatternNodeId node, VertexPair pair) {
+    auto const index = FindCandidate(node, pair);
+    if (!index || states_[*index] != CandidateState::kLive) return;
+    states_[*index] = CandidateState::kQueued;
+    queue_[queue_tail_] = *index;
+    if (++queue_tail_ == queue_.size()) queue_tail_ = 0;
+    ++pending_;
+}
+
+void PairingFilter::NotifyDependents(PairingPlan const& plan, PatternNodeId node, VertexPair pair,
+                                     GraphView first, GraphView second) {
+    for (auto edge : plan.incident[node]) {
+        auto const& triple = plan.key.triples[edge];
+        if (triple.subject == node) {
+            // A removed subject pair can support the incoming constraint of
+            // object candidates. Both components must be adjacent with p.
+            for (auto const& left : first.OutgoingFromMember(pair.first, triple.predicate))
+                for (auto const& right : second.OutgoingFromMember(pair.second, triple.predicate))
+                    Enqueue(triple.object, {left.neighbor, right.neighbor});
+        }
+        if (triple.object == node) {
+            for (auto const& left : first.IncomingToMember(pair.first, triple.predicate))
+                for (auto const& right : second.IncomingToMember(pair.second, triple.predicate))
+                    Enqueue(triple.subject, {left.neighbor, right.neighbor});
+        }
+    }
+}
+
+bool PairingFilter::HasSupport(VertexPair pair, PredicateId predicate, PatternNodeId neighbor,
+                               bool outgoing, GraphView first, GraphView second) const {
+    // Anchors came from the prepared domains. Filter neighbors before taking
+    // their Cartesian product, avoiding out-of-view combinations altogether.
+    auto first_edges = outgoing ? first.OutgoingFromMember(pair.first, predicate)
+                                : first.IncomingToMember(pair.first, predicate);
+    auto second_edges = outgoing ? second.OutgoingFromMember(pair.second, predicate)
+                                 : second.IncomingToMember(pair.second, predicate);
     for (auto const& left : first_edges)
         for (auto const& right : second_edges)
-            if (ContainsLive(relation, states, neighbor, {left.neighbor, right.neighbor}))
-                return true;
+            if (ContainsLive(neighbor, {left.neighbor, right.neighbor})) return true;
     return false;
 }
 
-}  // namespace
-
-PairingRelation ComputePairing(GraphKey const& key, GraphView first, GraphView second) {
-    auto result = InitialRelation(key, first, second);
-    if (result.pairs.empty()) return result;
-    std::vector<std::vector<std::size_t>> incident(key.nodes.size());
-    for (std::size_t i = 0; i < key.triples.size(); ++i) {
-        auto const& triple = key.triples[i];
-        incident[triple.subject].push_back(i);
-        if (triple.object != triple.subject) incident[triple.object].push_back(i);
+PairingRelation const& PairingFilter::Compute(PairingPlan const& plan, PairingDomain const& first,
+                                              PairingDomain const& second) {
+    Initialize(plan, first, second);
+    if (relation_.pairs.empty()) return relation_;
+    auto const& key = plan.key;
+    while (pending_ != 0) {
+        auto const index = queue_[queue_head_];
+        if (++queue_head_ == queue_.size()) queue_head_ = 0;
+        --pending_;
+        states_[index] = CandidateState::kLive;
+        auto const node = static_cast<PatternNodeId>(
+                std::ranges::upper_bound(relation_.offsets, index) - relation_.offsets.begin() - 1);
+        auto const pair = relation_.pairs[index];
+        bool supported = true;
+        for (auto edge : plan.incident[node]) {
+            auto const& triple = key.triples[edge];
+            bool const forward =
+                    triple.subject != node || HasSupport(pair, triple.predicate, triple.object,
+                                                         true, first.graph, second.graph);
+            bool const backward =
+                    triple.object != node || HasSupport(pair, triple.predicate, triple.subject,
+                                                        false, first.graph, second.graph);
+            if (forward && backward) continue;
+            supported = false;
+            break;
+        }
+        if (supported) continue;
+        states_[index] = CandidateState::kRemoved;
+        if (--live_counts_[node] == 0) {
+            Clear(key.nodes.size());
+            return relation_;
+        }
+        NotifyDependents(plan, node, pair, first.graph, second.graph);
     }
-    // Never erase candidates while checking supports, including self-references.
-    // One byte per initial pair; pending removals are committed after the pass.
-    std::vector<CandidateState> states(result.pairs.size(), CandidateState::kLive);
-    bool changed;
-    do {
-        changed = false;
-        for (std::size_t node = 0; node < key.nodes.size(); ++node) {
-            for (auto index = result.offsets[node]; index < result.offsets[node + 1]; ++index) {
-                if (states[index] == CandidateState::kRemoved) continue;
-                auto const pair = result.pairs[index];
-                for (auto edge : incident[node]) {
-                    auto const& triple = key.triples[edge];
-                    bool const forward = triple.subject != node ||
-                                         HasSupport(pair, triple.predicate, triple.object, true,
-                                                    first, second, result, states);
-                    bool const backward = triple.object != node ||
-                                          HasSupport(pair, triple.predicate, triple.subject, false,
-                                                     first, second, result, states);
-                    if (forward && backward) continue;
-                    states[index] = CandidateState::kPendingRemoval;
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        for (std::size_t node = 0; node < key.nodes.size(); ++node) {
-            bool any = false;
-            for (auto index = result.offsets[node]; index < result.offsets[node + 1]; ++index) {
-                if (states[index] == CandidateState::kPendingRemoval)
-                    states[index] = CandidateState::kRemoved;
-                any |= states[index] != CandidateState::kRemoved;
-            }
-            if (!any) return EmptyRelation(key.nodes.size());
-        }
-    } while (changed);
 
-    // Compact in place only after the fixed point. Sorted order is preserved.
+    // Compact only after the fixed point; sorted order is preserved.
     std::size_t write = 0;
     for (std::size_t node = 0; node < key.nodes.size(); ++node) {
-        auto const first_index = result.offsets[node], last_index = result.offsets[node + 1];
-        result.offsets[node] = write;
+        auto const first_index = relation_.offsets[node], last_index = relation_.offsets[node + 1];
+        relation_.offsets[node] = write;
         for (auto index = first_index; index < last_index; ++index)
-            if (states[index] != CandidateState::kRemoved)
-                result.pairs[write++] = result.pairs[index];
+            if (states_[index] != CandidateState::kRemoved)
+                relation_.pairs[write++] = relation_.pairs[index];
     }
-    result.offsets.back() = write;
-    result.pairs.resize(write);
-    return result;
+    relation_.offsets.back() = write;
+    relation_.pairs.resize(write);
+    return relation_;
+}
+
+PairingRelation ComputePairing(GraphKey const& key, GraphView first, GraphView second) {
+    auto const plan = BuildPairingPlan(key);
+    auto const first_domain = BuildPairingDomain(plan, first);
+    auto const second_domain = BuildPairingDomain(plan, second);
+    PairingFilter filter;
+    filter.Compute(plan, first_domain, second_domain);
+    return std::move(filter).TakeRelation();
 }
 
 }  // namespace gk_compact
